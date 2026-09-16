@@ -77,11 +77,13 @@ jobs:
             make install
             cd ..
 
-            echo '=== 5. Building Leptonica (shared) ==='
+            echo '=== 5. Building Leptonica (shared, skipping tools) ==='
             wget --no-check-certificate https://github.com/DanBloomberg/leptonica/releases/download/1.87.0/leptonica-1.87.0.tar.gz
             tar -xzf leptonica-1.87.0.tar.gz
             cd leptonica-1.87.0
             ./configure --prefix=\$PREFIX --enable-shared --disable-static CFLAGS='-Os' CXXFLAGS='-Os'
+            # Patch Makefile to only build the src library, skipping prog tools
+            sed -i 's/^SUBDIRS = .*/SUBDIRS = src/' Makefile
             make -j\$(nproc)
             make install
             cd ..
