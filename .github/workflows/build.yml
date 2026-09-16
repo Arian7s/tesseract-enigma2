@@ -1,10 +1,10 @@
-name: Build Tesseract OCR for Enigma2 (AArch64 - Minimal)
+name: Build Tesseract OCR for Enigma2 (ARMv7l - Minimal)
 
 on:
   workflow_dispatch:
 
 jobs:
-  build-aarch64:
+  build-armv7l:
     runs-on: ubuntu-22.04
 
     steps:
@@ -14,18 +14,17 @@ jobs:
     - name: Set up QEMU
       uses: docker/setup-qemu-action@v3
 
-    - name: Build Minimal Tesseract for AArch64 (Image-to-Text only)
+    - name: Build Minimal Tesseract for ARMv7l (Image-to-Text only)
       run: |
-        docker run --rm --platform linux/arm64 \
+        docker run --rm --platform linux/arm/v7 \
           -v ${{ github.workspace }}:/workspace \
           -w /workspace \
           ubuntu:22.04 /bin/bash -c "
-            # تثبيت فقط المكتبات الأساسية المطلوبة لقراءة الصور
             apt-get update && apt-get install -y \
               autoconf automake libtool pkg-config g++ make wget file \
               libpng-dev libjpeg-dev libtiff-dev zlib1g-dev
 
-            echo '--- Building Leptonica (Image processing library) ---'
+            echo '--- Building Leptonica ---'
             wget --no-check-certificate https://github.com/DanBloomberg/leptonica/releases/download/1.87.0/leptonica-1.87.0.tar.gz
             tar -xzf leptonica-1.87.0.tar.gz
             cd leptonica-1.87.0
@@ -34,17 +33,15 @@ jobs:
             make install
             cd ..
 
-            echo '--- Building Tesseract (OCR Engine only) ---'
+            echo '--- Building Tesseract ---'
             wget --no-check-certificate https://github.com/tesseract-ocr/tesseract/archive/refs/tags/5.5.3.tar.gz
             tar -xzf 5.5.3.tar.gz
             cd tesseract-5.5.3
-            
-            # تعديل مسارات tessdata لتناسب Enigma2
+
             sed -i 's|\"/usr/share/tessdata/\"|\"/usr/share/tessdata/;/media/hdd/tessdata/;/media/usb/tessdata/\"|g' src/ccutil/mainblk.cpp || true
-            
+
             ./autogen.sh
-            
-            # تعطيل كل الميزات غير الضرورية (PDF, Pango, Cairo, ICU)
+
             ./configure --prefix=/usr --disable-static --disable-debug \
                         --disable-icu --without-pango --without-cairo --without-libarchive \
                         CFLAGS='-Os' CXXFLAGS='-Os'
@@ -52,21 +49,21 @@ jobs:
             make DESTDIR=/tmp/tesseract-build install
             cd ..
 
-            echo '--- Structuring Enigma2 Package ---'
+            echo '--- Structuring Package ---'
             mkdir -p package/usr/bin
             mkdir -p package/usr/lib
             mkdir -p package/usr/share/tessdata
-            
+
             cp /tmp/tesseract-build/usr/bin/tesseract package/usr/bin/
             cp -P /tmp/tesseract-build/usr/lib/libtesseract.so* package/usr/lib/ || true
             cp -P /usr/lib/libleptonica.so* package/usr/lib/ || true
-            
-            echo '--- Stripping Binaries (Removing debug symbols) ---'
+
+            echo '--- Stripping Binaries ---'
             strip --strip-unneeded package/usr/bin/tesseract || true
             strip --strip-unneeded package/usr/lib/*.so* || true
-            
+
             chmod -R 777 package
-            
+
             echo '--- Final Size Verification ---'
             du -sh package/
             du -sh package/usr/lib/*
@@ -75,5 +72,5 @@ jobs:
     - name: Upload Complete Package
       uses: actions/upload-artifact@v4
       with:
-        name: tesseract-enigma2-aarch64-minimal
+        name: tesseract-enigma2-armv7l-minimal
         path: package/
