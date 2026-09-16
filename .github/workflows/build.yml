@@ -14,21 +14,22 @@ jobs:
     - name: Install Cross-Compile Tools
       run: |
         sudo apt-get update
-        sudo apt-get install -y autoconf automake libtool pkg-config g++-arm-linux-gnueabihf make wget git file
+        sudo apt-get install -y autoconf automake libtool pkg-config g++-arm-linux-gnueabihf make wget file
 
-    - name: Clone and Build Leptonica
+    - name: Download and Build Leptonica 1.87.0
       run: |
-        git clone --depth 1 https://github.com
-        cd leptonica
-        ./autogen.sh
-        ./configure --host=arm-linux-gnueabihf --prefix=/usr
+        wget --no-check-certificate https://github.com
+        tar -xzf leptonica-1.87.0.tar.gz
+        cd leptonica-1.87.0
+        ./configure --host=arm-linux-gnueabihf --prefix=/usr --enable-shared --enable-static
         make -j$(nproc)
         make DESTDIR=/tmp/sysroot install
 
-    - name: Clone and Patch Tesseract OCR
+    - name: Download and Patch Tesseract OCR 5.5.3
       run: |
-        git clone --depth 1 https://github.com
-        cd tesseract
+        wget --no-check-certificate https://github.com
+        tar -xzf 5.5.3.tar.gz
+        cd tesseract-5.5.3
         
         sed -i 's|"/usr/share/tessdata/"|"/usr/share/tessdata/;/media/hdd/tessdata/;/media/usb/tessdata/"|g' src/ccutil/mainblk.cpp || true
         
