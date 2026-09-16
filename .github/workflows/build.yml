@@ -11,53 +11,58 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    - name: Install Cross-Compile Tools
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y autoconf automake libtool pkg-config g++-arm-linux-gnueabihf make wget file
+    - name: Set up QEMU
+      uses: docker/setup-qemu-action@v3
 
-    - name: Download and Build Leptonica 1.87.0
+    - name: Build Tesseract and Leptonica inside ARMv7 Container
       run: |
-        wget --no-check-certificate https://github.com
-        tar -xzf leptonica-1.87.0.tar.gz
-        cd leptonica-1.87.0
-        ./configure --host=arm-linux-gnueabihf --prefix=/usr --enable-shared --enable-static
-        make -j$(nproc)
-        make DESTDIR=/tmp/sysroot install
+        docker run --rm --platform linux/arm/v7 \
+          -v ${{ github.workspace }}:/workspace \
+          -w /workspace \
+          ubuntu:22.04 /bin/bash -c "
+            apt-get update && apt-get install -y \
+              autoconf automake libtool pkg-config g++ make wget file \
+              libpng-dev libjpeg-dev libtiff-dev zlib1g-dev libicu-dev \
+              libpango1.0-dev libcairo2-dev libarchive-dev
 
-    - name: Download and Patch Tesseract OCR 5.5.3
-      run: |
-        wget --no-check-certificate https://github.com
-        tar -xzf 5.5.3.tar.gz
-        cd tesseract-5.5.3
-        
-        sed -i 's|"/usr/share/tessdata/"|"/usr/share/tessdata/;/media/hdd/tessdata/;/media/usb/tessdata/"|g' src/ccutil/mainblk.cpp || true
-        
-        ./autogen.sh
-        
-        export PKG_CONFIG_PATH=/tmp/sysroot/usr/lib/pkgconfig
-        export LEPTONICA_CFLAGS="-I/tmp/sysroot/usr/include"
-        export LEPTONICA_LIBS="-L/tmp/sysroot/usr/lib -lleptonica"
-        
-        ./configure --host=arm-linux-gnueabihf \
-                    --prefix=/usr \
-                    --with-extra-libraries=/tmp/sysroot/usr/lib \
-                    CXXFLAGS="-I/tmp/sysroot/usr/include" \
-                    LDFLAGS="-L/tmp/sysroot/usr/lib"
-        make -j$(nproc)
-        make DESTDIR=/tmp/tesseract-build install
+            echo '--- Building Leptonica 1.87.0 ---'
+            wget --no-check-certificate https://github.com/DanBloomberg/leptonica/releases/download/1.87.0/leptonica-1.87.0.tar.gz
+            tar -xzf leptonica-1.87.0.tar.gz
+            cd leptonica-1.87.0
+            ./configure --prefix=/usr --enable-shared --enable-static
+            make -j\$(nproc)
+            make install
+            cd ..
 
-    - name: Structure Enigma2 Directories & Verify
-      run: |
-        mkdir -p package/usr/bin
-        mkdir -p package/usr/lib
-        mkdir -p package/usr/share/tessdata
-        
-        cp /tmp/tesseract-build/usr/bin/tesseract package/usr/bin/
-        cp -P /tmp/tesseract-build/usr/lib/libtesseract.so* package/usr/lib/ || true
-        cp -P /tmp/sysroot/usr/lib/libleptonica.so* package/usr/lib/ || true
-        
-        file package/usr/bin/tesseract
+            echo '--- Building Tesseract 5.5.3 ---'
+            wget --no-check-certificate https://github.com/tesseract-ocr/tesseract/archive/refs/tags/5.5.3.tar.gz
+            tar -xzf 5.5.3.tar.gz
+            cd tesseract-5.5.3
+            
+            # تعديل مسارات tessdata لتناسب Enigma2
+            sed -i 's|\"/usr/share/tessdata/\"|\"/usr/share/tessdata/;/media/hdd/tessdata/;/media/usb/tessdata/\"|g' src/ccutil/mainblk.cpp || true
+            
+            ./autogen.sh
+            ./configure --prefix=/usr
+            make -j\$(nproc)
+            make DESTDIR=/tmp/tesseract-build install
+            cd ..
+
+            echo '--- Structuring Enigma2 Package ---'
+            mkdir -p package/usr/bin
+            mkdir -p package/usr/lib
+            mkdir -p package/usr/share/tessdata
+            
+            cp /tmp/tesseract-build/usr/bin/tesseract package/usr/bin/
+            cp -P /tmp/tesseract-build/usr/lib/libtesseract.so* package/usr/lib/ || true
+            cp -P /usr/lib/libleptonica.so* package/usr/lib/ || true
+            
+            # التأكد من صلاحيات الملفات
+            chmod -R 777 package
+            
+            echo '--- Verify Binary ---'
+            file package/usr/bin/tesseract
+          "
 
     - name: Upload Complete Package
       uses: actions/upload-artifact@v4
