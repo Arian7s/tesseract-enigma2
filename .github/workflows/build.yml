@@ -1,4 +1,4 @@
-name: Build Tesseract OCR for Enigma2 (ARMv7l - Static Deps ByArian)
+name: Build Tesseract OCR for Enigma2 (ARMv7l - OCR Only)
 
 on:
   workflow_dispatch:
@@ -14,7 +14,7 @@ jobs:
     - name: Set up QEMU
       uses: docker/setup-qemu-action@v3
 
-    - name: Build Tesseract with static dependencies and ByArian tag
+    - name: Build Tesseract with OCR-only features
       run: |
         docker run --rm --platform linux/arm/v7 \
           -v ${{ github.workspace }}:/workspace \
@@ -55,13 +55,14 @@ jobs:
             make install
             cd ..
 
-            echo '=== 3. Building libjpeg-turbo (static) ==='
+            echo '=== 3. Building libjpeg-turbo (static with 12-bit) ==='
             wget --no-check-certificate https://github.com/libjpeg-turbo/libjpeg-turbo/releases/download/3.1.1/libjpeg-turbo-3.1.1.tar.gz
             tar -xzf libjpeg-turbo-3.1.1.tar.gz
             cd libjpeg-turbo-3.1.1
             mkdir build && cd build
             cmake -DCMAKE_INSTALL_PREFIX=\$PREFIX -DCMAKE_BUILD_TYPE=Release \
                   -DENABLE_SHARED=OFF -DENABLE_STATIC=ON \
+                  -DWITH_12BIT=ON \
                   -DCMAKE_POSITION_INDEPENDENT_CODE=ON ..
             make -j\$(nproc)
             make install
@@ -76,30 +77,34 @@ jobs:
             make install
             cd ..
 
-            echo '=== 5. Building Leptonica (shared) ==='
+            echo '=== 5. Building Leptonica (shared, src only) ==='
             wget --no-check-certificate https://github.com/DanBloomberg/leptonica/releases/download/1.87.0/leptonica-1.87.0.tar.gz
             tar -xzf leptonica-1.87.0.tar.gz
             cd leptonica-1.87.0
             ./configure --prefix=\$PREFIX --enable-shared --disable-static \
                         CFLAGS='-Os' CXXFLAGS='-Os'
-            make -j\$(nproc)
-            make install
+            make -j\$(nproc) -C src
+            make install -C src
             cd ..
 
-            echo '=== 6. Building Tesseract (shared) with ByArian patch ==='
+            echo '=== 6. Building Tesseract (OCR only) ==='
             wget --no-check-certificate https://github.com/tesseract-ocr/tesseract/archive/refs/tags/5.5.3.tar.gz
             tar -xzf 5.5.3.tar.gz
             cd tesseract-5.5.3
 
-            # Patch the version output to add ByArian
+            # Add ByArian to version output
             sed -i 's|tprintf(\"tesseract %s\\n\", TessBaseAPI::Version());|tprintf(\"tesseract %s\\nByArian\\n\", TessBaseAPI::Version());|' src/tesseract.cpp
 
+            # Adjust tessdata paths for Enigma2
             sed -i 's|\"/usr/share/tessdata/\"|\"/usr/share/tessdata/;/media/hdd/tessdata/;/media/usb/tessdata/\"|g' src/ccutil/mainblk.cpp || true
 
             ./autogen.sh
             ./configure --prefix=\$PREFIX --disable-static --disable-debug \
                         --disable-icu --without-pango --without-cairo --without-libarchive \
-                        CFLAGS='-Os' CXXFLAGS='-Os'
+                        --disable-training --disable-graphics --disable-opencl \
+                        CFLAGS='-Os' CXXFLAGS='-Os' \
+                        LEPTONICA_CFLAGS=\"-I\$PREFIX/include\" \
+                        LEPTONICA_LIBS=\"-L\$PREFIX/lib -lleptonica\"
             make -j\$(nproc)
             make DESTDIR=/tmp/tesseract-build install
             cd ..
@@ -107,15 +112,12 @@ jobs:
             echo '=== 7. Copying and renaming libraries ==='
             cp /tmp/tesseract-build/usr/bin/tesseract \$SYSROOT_DIR/bin/
 
-            # Copy real tesseract library as libtesseract.so.5.5.3
             TESS_REAL=\$(find \$PREFIX/lib -maxdepth 1 -name 'libtesseract.so.*.*.*' -type f | head -n1)
             cp \"\$TESS_REAL\" \$SYSROOT_DIR/lib/libtesseract.so.5.5.3
 
-            # Copy real leptonica library as libleptonica.so.6.0.0
             LEPT_REAL=\$(find \$PREFIX/lib -maxdepth 1 -name 'libleptonica.so.*.*.*' -type f | head -n1)
             cp \"\$LEPT_REAL\" \$SYSROOT_DIR/lib/libleptonica.so.6.0.0
 
-            # Create symlinks
             cd \$SYSROOT_DIR/lib
             ln -s libtesseract.so.5.5.3 libtesseract.so.5
             ln -s libtesseract.so.5.5.3 libtesseract.so
@@ -132,5 +134,5 @@ jobs:
     - name: Upload Complete Package
       uses: actions/upload-artifact@v4
       with:
-        name: tesseract-enigma2-armv7l-static-ByArian
+        name: tesseract-enigma2-armv7l-ocr-only
         path: package/
