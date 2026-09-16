@@ -1,0 +1,69 @@
+name: Build Tesseract OCR for Enigma2 (ARMv7l)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-armv7l:
+    runs-on: ubuntu-22.04
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Install Cross-Compile Tools
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y autoconf automake libtool pkg-config g++-arm-linux-gnueabihf make wget git file
+
+    - name: Download and Build Leptonica 1.87.0
+      run: |
+        wget https://github.com
+        tar -xzf leptonica-1.87.0.tar.gz
+        cd leptonica-1.87.0
+        ./configure --host=arm-linux-gnueabihf --prefix=/usr
+        make -j$(nproc)
+        make DESTDIR=/tmp/sysroot install
+
+    - name: Download and Patch Tesseract OCR 5.5.3
+      run: |
+        wget https://github.com
+        tar -xzf 5.3.3.tar.gz
+        cd tesseract-5.3.3
+        
+        # تعديل الكود ليدعم مسارات tessdata المخصصة والخارجية بجانب المسار الافتراضي للسيستم
+        sed -i 's|"/usr/share/tessdata/"|"/usr/share/tessdata/;/media/hdd/tessdata/;/media/usb/tessdata/"|g' src/ccutil/mainblk.cpp || true
+        
+        ./autogen.sh
+        
+        export PKG_CONFIG_PATH=/tmp/sysroot/usr/lib/pkgconfig
+        export LEPTONICA_CFLAGS="-I/tmp/sysroot/usr/include"
+        export LEPTONICA_LIBS="-L/tmp/sysroot/usr/lib -lleptonica"
+        
+        ./configure --host=arm-linux-gnueabihf \
+                    --prefix=/usr \
+                    --with-extra-libraries=/tmp/sysroot/usr/lib \
+                    CXXFLAGS="-I/tmp/sysroot/usr/include" \
+                    LDFLAGS="-L/tmp/sysroot/usr/lib"
+        make -j$(nproc)
+        make DESTDIR=/tmp/tesseract-build install
+
+    - name: Structure Enigma2 Directories & Verify
+      run: |
+        mkdir -p package/usr/bin
+        mkdir -p package/usr/lib
+        mkdir -p package/usr/share/tessdata
+        
+        # نقل الملفات التنفيذية والمكتبات إلى هيكل مسارات الرسيفر الصحيحة
+        cp /tmp/tesseract-build/usr/bin/tesseract package/usr/bin/
+        cp -P /tmp/tesseract-build/usr/lib/libtesseract.so* package/usr/lib/
+        cp -P /tmp/sysroot/usr/lib/libleptonica.so* package/usr/lib/
+        
+        # فحص المعمارية للتأكد من أنها للرسيفر ARM
+        file package/usr/bin/tesseract
+
+    - name: Upload Complete Package
+      uses: actions/upload-artifact@v4
+      with:
+        name: tesseract-enigma2-custom-build
+        path: package/
