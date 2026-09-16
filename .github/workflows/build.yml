@@ -34,7 +34,7 @@ jobs:
 
             export PKG_CONFIG_PATH=\$PREFIX/lib/pkgconfig
             export PKG_CONFIG_LIBDIR=\$PREFIX/lib/pkgconfig
-            export CPPFLAGS=-I\$PREFIX/include
+            export CPPFLAGS=\"-I\$PREFIX/include -I\$PREFIX/include/leptonica\"
             export LDFLAGS=\"-L\$PREFIX/lib -Wl,-rpath,\$PREFIX/lib -Wl,--disable-new-dtags\"
 
             echo '=== 1. Building zlib (static) ==='
@@ -77,14 +77,13 @@ jobs:
             make install
             cd ..
 
-            echo '=== 5. Building Leptonica (shared, src only) ==='
+            echo '=== 5. Building Leptonica (shared) ==='
             wget --no-check-certificate https://github.com/DanBloomberg/leptonica/releases/download/1.87.0/leptonica-1.87.0.tar.gz
             tar -xzf leptonica-1.87.0.tar.gz
             cd leptonica-1.87.0
-            ./configure --prefix=\$PREFIX --enable-shared --disable-static \
-                        CFLAGS='-Os' CXXFLAGS='-Os'
-            make -j\$(nproc) -C src
-            make install -C src
+            ./configure --prefix=\$PREFIX --enable-shared --disable-static CFLAGS='-Os' CXXFLAGS='-Os'
+            make -j\$(nproc)
+            make install
             cd ..
 
             echo '=== 6. Building Tesseract (OCR only) ==='
@@ -103,7 +102,7 @@ jobs:
                         --disable-icu --without-pango --without-cairo --without-libarchive \
                         --disable-training --disable-graphics --disable-opencl \
                         CFLAGS='-Os' CXXFLAGS='-Os' \
-                        LEPTONICA_CFLAGS=\"-I\$PREFIX/include\" \
+                        LEPTONICA_CFLAGS=\"-I\$PREFIX/include -I\$PREFIX/include/leptonica\" \
                         LEPTONICA_LIBS=\"-L\$PREFIX/lib -lleptonica\"
             make -j\$(nproc)
             make DESTDIR=/tmp/tesseract-build install
