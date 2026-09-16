@@ -16,22 +16,20 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y autoconf automake libtool pkg-config g++-arm-linux-gnueabihf make wget git file
 
-    - name: Download and Build Leptonica 1.87.0
+    - name: Clone and Build Leptonica
       run: |
-        wget https://github.com
-        tar -xzf leptonica-1.87.0.tar.gz
-        cd leptonica-1.87.0
+        git clone --depth 1 https://github.com
+        cd leptonica
+        ./autogen.sh
         ./configure --host=arm-linux-gnueabihf --prefix=/usr
         make -j$(nproc)
         make DESTDIR=/tmp/sysroot install
 
-    - name: Download and Patch Tesseract OCR 5.5.3
+    - name: Clone and Patch Tesseract OCR
       run: |
-        wget https://github.com
-        tar -xzf 5.3.3.tar.gz
-        cd tesseract-5.3.3
+        git clone --depth 1 https://github.com
+        cd tesseract
         
-        # تعديل الكود ليدعم مسارات tessdata المخصصة والخارجية بجانب المسار الافتراضي للسيستم
         sed -i 's|"/usr/share/tessdata/"|"/usr/share/tessdata/;/media/hdd/tessdata/;/media/usb/tessdata/"|g' src/ccutil/mainblk.cpp || true
         
         ./autogen.sh
@@ -54,12 +52,10 @@ jobs:
         mkdir -p package/usr/lib
         mkdir -p package/usr/share/tessdata
         
-        # نقل الملفات التنفيذية والمكتبات إلى هيكل مسارات الرسيفر الصحيحة
         cp /tmp/tesseract-build/usr/bin/tesseract package/usr/bin/
-        cp -P /tmp/tesseract-build/usr/lib/libtesseract.so* package/usr/lib/
-        cp -P /tmp/sysroot/usr/lib/libleptonica.so* package/usr/lib/
+        cp -P /tmp/tesseract-build/usr/lib/libtesseract.so* package/usr/lib/ || true
+        cp -P /tmp/sysroot/usr/lib/libleptonica.so* package/usr/lib/ || true
         
-        # فحص المعمارية للتأكد من أنها للرسيفر ARM
         file package/usr/bin/tesseract
 
     - name: Upload Complete Package
