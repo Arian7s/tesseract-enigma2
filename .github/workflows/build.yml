@@ -23,182 +23,183 @@ jobs:
             set -e
 
             apt-get update && apt-get install -y --no-install-recommends \
-              autoconf automake libtool pkg-config g++ make wget file cmake nasm
+              autoconf automake libtool pkg-config g++ make wget file cmake nasm \
+              binutils
 
             STATIC_PREFIX=/opt/static-deps
             INSTALL_PREFIX=/opt/tesseract-install
             mkdir -p \$STATIC_PREFIX \$INSTALL_PREFIX
 
-            CFLAGS='-Os -fPIC'
-            CXXFLAGS='-Os -fPIC'
-
             # ─── zlib ───────────────────────────────────────────────
             echo '--- Building zlib ---'
-            wget --no-check-certificate https://zlib.net/zlib-1.3.1.tar.gz
+            wget -q --no-check-certificate https://zlib.net/zlib-1.3.1.tar.gz
             tar -xzf zlib-1.3.1.tar.gz && cd zlib-1.3.1
-            ./configure --prefix=\$STATIC_PREFIX --static
+            CFLAGS='-Os -fPIC' ./configure --prefix=\$STATIC_PREFIX --static
             make -j\$(nproc) && make install
             cd ..
 
             # ─── libjpeg-turbo ──────────────────────────────────────
             echo '--- Building libjpeg-turbo ---'
-            wget --no-check-certificate https://github.com/libjpeg-turbo/libjpeg-turbo/releases/download/3.1.1/libjpeg-turbo-3.1.1.tar.gz
+            wget -q --no-check-certificate https://github.com/libjpeg-turbo/libjpeg-turbo/releases/download/3.1.1/libjpeg-turbo-3.1.1.tar.gz
             tar -xzf libjpeg-turbo-3.1.1.tar.gz && cd libjpeg-turbo-3.1.1
             cmake -DCMAKE_INSTALL_PREFIX=\$STATIC_PREFIX \
                   -DCMAKE_BUILD_TYPE=Release \
                   -DCMAKE_C_FLAGS='-Os -fPIC' \
                   -DENABLE_SHARED=OFF \
                   -DENABLE_STATIC=ON \
-                  -B build
+                  -B build .
             cmake --build build -j\$(nproc)
             cmake --install build
             cd ..
 
             # ─── libpng ─────────────────────────────────────────────
             echo '--- Building libpng ---'
-            wget --no-check-certificate https://download.sourceforge.net/libpng/libpng-1.6.47.tar.gz
+            wget -q --no-check-certificate https://download.sourceforge.net/libpng/libpng-1.6.47.tar.gz
             tar -xzf libpng-1.6.47.tar.gz && cd libpng-1.6.47
             ./configure --prefix=\$STATIC_PREFIX \
                         --enable-static --disable-shared \
                         CFLAGS='-Os -fPIC' \
-                        LDFLAGS='-L\$STATIC_PREFIX/lib' \
-                        CPPFLAGS='-I\$STATIC_PREFIX/include'
+                        LDFLAGS=\"-L\$STATIC_PREFIX/lib\" \
+                        CPPFLAGS=\"-I\$STATIC_PREFIX/include\"
             make -j\$(nproc) && make install
             cd ..
 
             # ─── libtiff ────────────────────────────────────────────
             echo '--- Building libtiff ---'
-            wget --no-check-certificate https://download.osgeo.org/libtiff/tiff-4.7.0.tar.gz
+            wget -q --no-check-certificate https://download.osgeo.org/libtiff/tiff-4.7.0.tar.gz
             tar -xzf tiff-4.7.0.tar.gz && cd tiff-4.7.0
             ./configure --prefix=\$STATIC_PREFIX \
                         --enable-static --disable-shared \
                         --disable-webp --disable-jbig \
                         CFLAGS='-Os -fPIC' \
-                        LDFLAGS='-L\$STATIC_PREFIX/lib' \
-                        CPPFLAGS='-I\$STATIC_PREFIX/include'
+                        LDFLAGS=\"-L\$STATIC_PREFIX/lib\" \
+                        CPPFLAGS=\"-I\$STATIC_PREFIX/include\"
             make -j\$(nproc) && make install
             cd ..
 
-            # ─── Leptonica (shared + static deps مدمجة) ─────────────
+            # ─── Leptonica ──────────────────────────────────────────
             echo '--- Building Leptonica ---'
-            wget --no-check-certificate https://github.com/DanBloomberg/leptonica/releases/download/1.87.0/leptonica-1.87.0.tar.gz
+            wget -q --no-check-certificate https://github.com/DanBloomberg/leptonica/releases/download/1.87.0/leptonica-1.87.0.tar.gz
             tar -xzf leptonica-1.87.0.tar.gz && cd leptonica-1.87.0
 
+            PKG_CONFIG_PATH=\"\$STATIC_PREFIX/lib/pkgconfig\" \
             ./configure --prefix=\$INSTALL_PREFIX \
                         --enable-shared --disable-static \
                         CFLAGS='-Os -fPIC' \
                         CXXFLAGS='-Os -fPIC' \
-                        LDFLAGS='-L\$STATIC_PREFIX/lib' \
-                        CPPFLAGS='-I\$STATIC_PREFIX/include' \
-                        PKG_CONFIG_PATH='\$STATIC_PREFIX/lib/pkgconfig'
-            make -j\$(nproc)
-            make install
+                        LDFLAGS=\"-L\$STATIC_PREFIX/lib\" \
+                        CPPFLAGS=\"-I\$STATIC_PREFIX/include\"
+            make -j\$(nproc) && make install
+            cd ..
 
-            # دمج المكتبات الثابتة داخل libleptonica.so
+            # ─── دمج static libs داخل libleptonica.so ───────────────
+            echo '--- Embedding static deps into libleptonica ---'
             cd \$INSTALL_PREFIX/lib
-            LEPSO=\$(ls libleptonica.so.*.*.* | head -1)
-            echo \"Relinking \$LEPSO with embedded static deps...\"
-            objcopy --input-target=elf32-littlearm \$LEPSO \$LEPSO.bak 2>/dev/null || true
 
-            g++ -Os -fPIC -shared -o \$LEPSO.new \
+            LEPSO_FULL=\$(ls libleptonica.so.*.*.* 2>/dev/null | head -1)
+            echo \"Found: \$LEPSO_FULL\"
+            SONAME_LEP=\$(objdump -p \$LEPSO_FULL | grep SONAME | awk '{print \$2}')
+            echo \"SONAME: \$SONAME_LEP\"
+
+            # استخراج object files من المكتبة الحالية
+            mkdir -p /tmp/lep_obj && cd /tmp/lep_obj
+            ar x \$INSTALL_PREFIX/lib/\$(ls \$INSTALL_PREFIX/lib/libleptonica.a 2>/dev/null || echo '') 2>/dev/null || true
+
+            # إعادة البناء مع دمج كل شيء
+            g++ -Os -shared -fPIC \
+              -Wl,-soname,\$SONAME_LEP \
               -Wl,--whole-archive \
+              \$INSTALL_PREFIX/lib/\$LEPSO_FULL \
               \$STATIC_PREFIX/lib/libjpeg.a \
               \$STATIC_PREFIX/lib/libpng.a \
               \$STATIC_PREFIX/lib/libtiff.a \
               \$STATIC_PREFIX/lib/libz.a \
               -Wl,--no-whole-archive \
-              -Wl,--soname=\$(objdump -p \$LEPSO | grep SONAME | awk '{print \$2}') \
-              -Wl,--whole-archive \$LEPSO -Wl,--no-whole-archive \
-              -lm -lstdc++ -lc
+              -lm -lstdc++ \
+              -o /tmp/\$LEPSO_FULL
 
-            mv \$LEPSO.new \$LEPSO
-            # تحديث الـ symlinks
-            SONAME=\$(objdump -p \$LEPSO | grep SONAME | awk '{print \$2}')
-            ln -sf \$LEPSO \$SONAME
-            ln -sf \$SONAME libleptonica.so
+            cp /tmp/\$LEPSO_FULL \$INSTALL_PREFIX/lib/\$LEPSO_FULL
             ldconfig -n \$INSTALL_PREFIX/lib
             cd /workspace
 
             # ─── Tesseract ──────────────────────────────────────────
             echo '--- Building Tesseract ---'
-            wget --no-check-certificate https://github.com/tesseract-ocr/tesseract/archive/refs/tags/5.5.3.tar.gz
+            wget -q --no-check-certificate https://github.com/tesseract-ocr/tesseract/archive/refs/tags/5.5.3.tar.gz
             tar -xzf 5.5.3.tar.gz && cd tesseract-5.5.3
 
             sed -i 's|\"/usr/share/tessdata/\"|\"/usr/share/tessdata/;/media/hdd/tessdata/;/media/usb/tessdata/\"|g' src/ccutil/mainblk.cpp || true
 
             ./autogen.sh
 
-            PKG_CONFIG_PATH='\$INSTALL_PREFIX/lib/pkgconfig:\$STATIC_PREFIX/lib/pkgconfig' \
+            PKG_CONFIG_PATH=\"\$INSTALL_PREFIX/lib/pkgconfig:\$STATIC_PREFIX/lib/pkgconfig\" \
             ./configure --prefix=\$INSTALL_PREFIX \
                         --disable-static --disable-debug \
                         --disable-icu --without-pango --without-cairo --without-libarchive \
                         CFLAGS='-Os -fPIC' \
                         CXXFLAGS='-Os -fPIC' \
-                        LDFLAGS='-L\$INSTALL_PREFIX/lib -L\$STATIC_PREFIX/lib' \
-                        CPPFLAGS='-I\$INSTALL_PREFIX/include -I\$STATIC_PREFIX/include'
-            make -j\$(nproc)
-            make install
+                        LDFLAGS=\"-L\$INSTALL_PREFIX/lib -L\$STATIC_PREFIX/lib\" \
+                        CPPFLAGS=\"-I\$INSTALL_PREFIX/include -I\$STATIC_PREFIX/include\"
+            make -j\$(nproc) && make install
+            cd ..
 
-            # دمج المكتبات الثابتة داخل libtesseract.so
+            # ─── دمج static libs داخل libtesseract.so ───────────────
+            echo '--- Embedding static deps into libtesseract ---'
             cd \$INSTALL_PREFIX/lib
-            TESSSO=\$(ls libtesseract.so.*.*.* | head -1)
-            echo \"Relinking \$TESSSO with embedded static deps...\"
 
-            g++ -Os -fPIC -shared -o \$TESSSO.new \
+            TESSSO_FULL=\$(ls libtesseract.so.*.*.* 2>/dev/null | head -1)
+            echo \"Found: \$TESSSO_FULL\"
+            SONAME_TESS=\$(objdump -p \$TESSSO_FULL | grep SONAME | awk '{print \$2}')
+            echo \"SONAME: \$SONAME_TESS\"
+
+            g++ -Os -shared -fPIC \
+              -Wl,-soname,\$SONAME_TESS \
               -Wl,--whole-archive \
+              \$INSTALL_PREFIX/lib/\$TESSSO_FULL \
               \$STATIC_PREFIX/lib/libjpeg.a \
               \$STATIC_PREFIX/lib/libpng.a \
               \$STATIC_PREFIX/lib/libtiff.a \
               \$STATIC_PREFIX/lib/libz.a \
               -Wl,--no-whole-archive \
-              -Wl,--soname=\$(objdump -p \$TESSSO | grep SONAME | awk '{print \$2}') \
-              -Wl,--whole-archive \$TESSSO -Wl,--no-whole-archive \
-              -L\$INSTALL_PREFIX/lib -lleptonica \
-              -lm -lstdc++ -lc
+              -L\$INSTALL_PREFIX/lib \
+              -lleptonica \
+              -lm -lstdc++ \
+              -o /tmp/\$TESSSO_FULL
 
-            mv \$TESSSO.new \$TESSSO
-            SONAME=\$(objdump -p \$TESSSO | grep SONAME | awk '{print \$2}')
-            ln -sf \$TESSSO \$SONAME
-            ln -sf \$SONAME libtesseract.so
+            cp /tmp/\$TESSSO_FULL \$INSTALL_PREFIX/lib/\$TESSSO_FULL
             ldconfig -n \$INSTALL_PREFIX/lib
             cd /workspace
 
             # ─── التحقق ─────────────────────────────────────────────
-            echo '--- Verify dependencies (should show NO libjpeg/libpng/libtiff/libz) ---'
-            LD_LIBRARY_PATH=\$INSTALL_PREFIX/lib \
-              ldd \$INSTALL_PREFIX/lib/\$LEPSO | grep -E 'jpeg|png|tiff|zlib' || echo 'OK: No external image libs'
+            echo '--- Check libleptonica dependencies ---'
+            LD_LIBRARY_PATH=\$INSTALL_PREFIX/lib ldd \$INSTALL_PREFIX/lib/\$LEPSO_FULL || true
 
-            echo '--- Verify Tesseract version ---'
-            LD_LIBRARY_PATH=\$INSTALL_PREFIX/lib \
-              \$INSTALL_PREFIX/bin/tesseract --version
+            echo '--- Check libtesseract dependencies ---'
+            LD_LIBRARY_PATH=\$INSTALL_PREFIX/lib ldd \$INSTALL_PREFIX/lib/\$TESSSO_FULL || true
 
-            # ─── تجميع الحزمة النهائية ──────────────────────────────
-            echo '--- Structuring Final Package (3 files only) ---'
-            mkdir -p package/usr/bin
-            mkdir -p package/usr/lib
+            echo '--- Tesseract version ---'
+            LD_LIBRARY_PATH=\$INSTALL_PREFIX/lib \$INSTALL_PREFIX/bin/tesseract --version
 
-            # tesseract binary
+            # ─── الحزمة النهائية 3 ملفات فقط ────────────────────────
+            echo '--- Building Final Package ---'
+            mkdir -p package/usr/bin package/usr/lib
+
             cp \$INSTALL_PREFIX/bin/tesseract package/usr/bin/
-
-            # libtesseract.so.5.5.3 فقط
             cp \$INSTALL_PREFIX/lib/libtesseract.so.5.5.3 package/usr/lib/
+            cp \$INSTALL_PREFIX/lib/\$LEPSO_FULL package/usr/lib/
 
-            # libleptonica.so.6.0.0 فقط
-            LEPFILE=\$(ls \$INSTALL_PREFIX/lib/libleptonica.so.*.*.* | head -1)
-            cp \$LEPFILE package/usr/lib/
-
-            # Strip
             strip --strip-unneeded package/usr/bin/tesseract || true
             strip --strip-unneeded package/usr/lib/*.so* || true
 
             chmod -R 777 package
 
-            echo '--- Final 3 files ---'
+            echo '=== FINAL 3 FILES ==='
             find package -type f | sort
+            echo '=== SIZES ==='
             du -sh package/usr/lib/*
+            du -sh package/usr/bin/*
           "
 
-    - name: Upload Complete Package
+    - name: Upload Package
       uses: actions/upload-artifact@v4
       with:
         name: tesseract-enigma2-armv7l-minimal
