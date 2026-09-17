@@ -72,7 +72,7 @@ jobs:
             make -j\$(nproc) && make install
             cd ..
 
-            echo 'DONE. Files:'
+            echo '=== DONE ==='
             find \$PREFIX -type f | sort
           "
 
@@ -95,7 +95,7 @@ jobs:
       uses: actions/cache@v4
       with:
         path: /tmp/lept-cache
-        key: leptonica-1.87.0
+        key: leptonica-1.87.0-v2
 
     - name: Build Leptonica
       if: steps.cache-lept.outputs.cache-hit != 'true'
@@ -117,18 +117,29 @@ jobs:
 
             wget -q --no-check-certificate https://github.com/DanBloomberg/leptonica/releases/download/1.87.0/leptonica-1.87.0.tar.gz
             tar -xzf leptonica-1.87.0.tar.gz && cd leptonica-1.87.0
+
             ./configure --prefix=\$PREFIX \
               --enable-shared --disable-static \
-              --without-giflib --without-libwebp \
-              --without-libopenjpeg --without-libwebpmux
+              --without-giflib \
+              --without-libwebp \
+              --without-libopenjpeg \
+              --without-libwebpmux \
+              ZLIB_CFLAGS=\"-I\$PREFIX/include\" \
+              ZLIB_LIBS=\"-L\$PREFIX/lib -lz\" \
+              PNG_CFLAGS=\"-I\$PREFIX/include\" \
+              PNG_LIBS=\"-L\$PREFIX/lib -lpng\" \
+              JPEG_CFLAGS=\"-I\$PREFIX/include\" \
+              JPEG_LIBS=\"-L\$PREFIX/lib -ljpeg\" \
+              TIFF_CFLAGS=\"-I\$PREFIX/include\" \
+              TIFF_LIBS=\"-L\$PREFIX/lib -ltiff\"
+
             make -j\$(nproc) && make install
 
             mkdir -p /lept-out/lib /lept-out/include
             cp -a \$PREFIX/lib/libleptonica* /lept-out/lib/
             cp -a \$PREFIX/include/leptonica /lept-out/include/
-            cp -a \$PREFIX/lib/pkgconfig/lept.pc /lept-out/lib/pkgconfig/ 2>/dev/null || true
 
-            echo 'Leptonica DONE:'
+            echo '=== Leptonica DONE ==='
             find /lept-out -type f | sort
           "
 
@@ -150,7 +161,7 @@ jobs:
       uses: actions/cache@v4
       with:
         path: /tmp/lept-cache
-        key: leptonica-1.87.0
+        key: leptonica-1.87.0-v2
 
     - name: Build Tesseract
       run: |
@@ -197,15 +208,20 @@ jobs:
 
             cp /tmp/tess-install\$PREFIX/bin/tesseract \$OUT/bin/
 
-            TESS_SO=\$(find /tmp/tess-install\$PREFIX/lib -maxdepth 1 -name 'libtesseract.so.*.*.*' | head -n1)
+            TESS_SO=\$(find /tmp/tess-install\$PREFIX/lib -maxdepth 1 \
+              -name 'libtesseract.so.*.*.*' | head -n1)
             cp \"\$TESS_SO\" \$OUT/lib/libtesseract.so.5.5.3
 
-            LEPT_SO=\$(find \$PREFIX/lib -maxdepth 1 -name 'libleptonica.so.*.*.*' | head -n1)
+            LEPT_SO=\$(find \$PREFIX/lib -maxdepth 1 \
+              -name 'libleptonica.so.*.*.*' | head -n1)
             cp \"\$LEPT_SO\" \$OUT/lib/libleptonica.so.6.0.0
 
-            patchelf --replace-needed libtesseract.so.5 libtesseract.so.5.5.3 \$OUT/bin/tesseract || true
-            patchelf --replace-needed libleptonica.so.6 libleptonica.so.6.0.0 \$OUT/bin/tesseract || true
-            patchelf --replace-needed libleptonica.so.6 libleptonica.so.6.0.0 \$OUT/lib/libtesseract.so.5.5.3 || true
+            patchelf --replace-needed libtesseract.so.5 libtesseract.so.5.5.3 \
+              \$OUT/bin/tesseract || true
+            patchelf --replace-needed libleptonica.so.6 libleptonica.so.6.0.0 \
+              \$OUT/bin/tesseract || true
+            patchelf --replace-needed libleptonica.so.6 libleptonica.so.6.0.0 \
+              \$OUT/lib/libtesseract.so.5.5.3 || true
 
             strip --strip-unneeded \$OUT/bin/tesseract || true
             strip --strip-unneeded \$OUT/lib/libtesseract.so.5.5.3 || true
@@ -215,8 +231,11 @@ jobs:
             echo '===== FINAL FILES ====='
             find /workspace/package -type f | sort
             echo '===== DEPS ====='
+            echo '--- tesseract ---'
             readelf -d \$OUT/bin/tesseract | grep NEEDED
+            echo '--- libtesseract ---'
             readelf -d \$OUT/lib/libtesseract.so.5.5.3 | grep NEEDED
+            echo '--- libleptonica ---'
             readelf -d \$OUT/lib/libleptonica.so.6.0.0 | grep NEEDED
           "
 
