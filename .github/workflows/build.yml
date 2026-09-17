@@ -1,4 +1,4 @@
-name: Build Tesseract OCR for Enigma2 (ARMv7l - OCR Only)
+name: Build Tesseract OCR for Enigma2 (ARMv7l - OCR Only - No Symlinks)
 
 on:
   workflow_dispatch:
@@ -23,7 +23,7 @@ jobs:
             set -e
 
             apt-get update && apt-get install -y \
-              autoconf automake libtool pkg-config g++ make wget file cmake nasm
+              autoconf automake libtool pkg-config g++ make wget file cmake nasm patchelf
 
             export PREFIX=/usr
             export SYSROOT_DIR=/workspace/package\$PREFIX
@@ -77,13 +77,13 @@ jobs:
             make install
             cd ..
 
-            echo '=== 5. Building Leptonica (shared, skipping tools) ==='
+            echo '=== 5. Building Leptonica (shared) ==='
             wget --no-check-certificate https://github.com/DanBloomberg/leptonica/releases/download/1.87.0/leptonica-1.87.0.tar.gz
             tar -xzf leptonica-1.87.0.tar.gz
             cd leptonica-1.87.0
             ./configure --prefix=\$PREFIX --enable-shared --disable-static CFLAGS='-Os' CXXFLAGS='-Os'
-            # Patch Makefile to only build the src library, skipping prog tools
-            sed -i 's/^SUBDIRS = .*/SUBDIRS = src/' Makefile
+            find . -name 'Makefile' -exec sed -i 's|-ljpeg|-ljpeg -ljpeg12|g' {} \;
+            find . -name 'Makefile' -exec sed -i 's|-ltiff|-ltiff -ljpeg12|g' {} \;
             make -j\$(nproc)
             make install
             cd ..
@@ -110,7 +110,7 @@ jobs:
             make DESTDIR=/tmp/tesseract-build install
             cd ..
 
-            echo '=== 7. Copying and renaming libraries ==='
+            echo '=== 7. Copying only the two main libraries ==='
             cp /tmp/tesseract-build/usr/bin/tesseract \$SYSROOT_DIR/bin/
 
             TESS_REAL=\$(find \$PREFIX/lib -maxdepth 1 -name 'libtesseract.so.*.*.*' -type f | head -n1)
@@ -119,13 +119,14 @@ jobs:
             LEPT_REAL=\$(find \$PREFIX/lib -maxdepth 1 -name 'libleptonica.so.*.*.*' -type f | head -n1)
             cp \"\$LEPT_REAL\" \$SYSROOT_DIR/lib/libleptonica.so.6.0.0
 
-            cd \$SYSROOT_DIR/lib
-            ln -s libtesseract.so.5.5.3 libtesseract.so.5
-            ln -s libtesseract.so.5.5.3 libtesseract.so
-            ln -s libleptonica.so.6.0.0 libleptonica.so.6
-            ln -s libleptonica.so.6.0.0 libleptonica.so
+            echo '=== 8. Patching tesseract to use full library names directly ==='
+            patchelf --replace-needed libtesseract.so.5 libtesseract.so.5.5.3 \$SYSROOT_DIR/bin/tesseract || true
+            patchelf --replace-needed libleptonica.so.6 libleptonica.so.6.0.0 \$SYSROOT_DIR/bin/tesseract || true
 
-            echo '=== 8. Stripping ==='
+            # Optional: verify
+            patchelf --print-needed \$SYSROOT_DIR/bin/tesseract
+
+            echo '=== 9. Stripping ==='
             strip --strip-unneeded \$SYSROOT_DIR/bin/tesseract || true
             strip --strip-unneeded \$SYSROOT_DIR/lib/libtesseract.so.5.5.3 || true
             strip --strip-unneeded \$SYSROOT_DIR/lib/libleptonica.so.6.0.0 || true
@@ -135,5 +136,5 @@ jobs:
     - name: Upload Complete Package
       uses: actions/upload-artifact@v4
       with:
-        name: tesseract-enigma2-armv7l-ocr-only
+        name: tesseract-enigma2-armv7l-ocr-only-no-symlinks
         path: package/
