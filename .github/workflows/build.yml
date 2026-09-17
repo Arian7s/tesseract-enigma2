@@ -17,7 +17,7 @@ jobs:
       uses: actions/cache@v4
       with:
         path: /tmp/prefix-cache
-        key: libs-zlib-1.3.1-png-1.6.40-jpeg-3.1.1-tiff-4.7.0
+        key: libs-zlib-1.3.1-png-1.6.40-jpeg-3.1.1-tiff-4.7.0-v2
 
     - name: Build zlib, libpng, libjpeg, libtiff
       if: steps.cache-libs.outputs.cache-hit != 'true'
@@ -38,6 +38,18 @@ jobs:
             tar -xzf zlib-1.3.1.tar.gz && cd zlib-1.3.1
             ./configure --prefix=\$PREFIX --static
             make -j\$(nproc) && make install
+            cat > \$PREFIX/lib/pkgconfig/zlib.pc << EOF
+prefix=\$PREFIX
+exec_prefix=\$PREFIX
+libdir=\$PREFIX/lib
+includedir=\$PREFIX/include
+
+Name: zlib
+Description: zlib compression library
+Version: 1.3.1
+Libs: -L\$PREFIX/lib -lz
+Cflags: -I\$PREFIX/include
+EOF
             cd ..
 
             echo '=== libpng ==='
@@ -88,14 +100,14 @@ jobs:
       uses: actions/cache@v4
       with:
         path: /tmp/prefix-cache
-        key: libs-zlib-1.3.1-png-1.6.40-jpeg-3.1.1-tiff-4.7.0
+        key: libs-zlib-1.3.1-png-1.6.40-jpeg-3.1.1-tiff-4.7.0-v2
 
     - name: Cache leptonica
       id: cache-lept
       uses: actions/cache@v4
       with:
         path: /tmp/lept-cache
-        key: leptonica-1.87.0-v2
+        key: leptonica-1.87.0-v3
 
     - name: Build Leptonica
       if: steps.cache-lept.outputs.cache-hit != 'true'
@@ -155,13 +167,13 @@ jobs:
       uses: actions/cache@v4
       with:
         path: /tmp/prefix-cache
-        key: libs-zlib-1.3.1-png-1.6.40-jpeg-3.1.1-tiff-4.7.0
+        key: libs-zlib-1.3.1-png-1.6.40-jpeg-3.1.1-tiff-4.7.0-v2
 
     - name: Restore leptonica cache
       uses: actions/cache@v4
       with:
         path: /tmp/lept-cache
-        key: leptonica-1.87.0-v2
+        key: leptonica-1.87.0-v3
 
     - name: Build Tesseract
       run: |
@@ -179,7 +191,6 @@ jobs:
             export OUT=/workspace/package/usr
             mkdir -p \$OUT/bin \$OUT/lib
 
-            # دمج leptonica في prefix
             cp -a /lept-cache/lib/* \$PREFIX/lib/
             cp -a /lept-cache/include/* \$PREFIX/include/
 
