@@ -1,575 +1,466 @@
 name: Build Tesseract OCR for Enigma2 (ARMv7l - OCR Only)
 
-on:
-workflow_dispatch:
+on: workflow_dispatch:
 
 jobs:
-build:
-runs-on: ubuntu-22.04
-
-steps:
-
-  - name: Checkout
-    uses: actions/checkout@v4
-
-  - name: Setup QEMU
-    uses: docker/setup-qemu-action@v3
-
-  - name: Cache prefix
-    uses: actions/cache@v4
-    with:
-      path: /tmp/prefix-cache
-      key: tesseract-armv7l-prefix-v4
-
-  - name: Build Tesseract ARMv7l
-    shell: bash
-    run: |
-
-      set -e
-
-      mkdir -p /tmp/prefix-cache
-      rm -rf package
-
-      docker run --rm --platform linux/arm/v7 \
-        -v "${{ github.workspace }}:/workspace" \
-        -v /tmp/prefix-cache:/prefix-cache \
-        -w /workspace \
-        ubuntu:22.04 \
-        /bin/bash <<'DOCKER_SCRIPT'
-
-      set -e
-
-      echo "========================================"
-      echo " Tesseract 5.5.3 ARMv7l"
-      echo " OCR ONLY BUILD"
-      echo "========================================"
-
-      export DEBIAN_FRONTEND=noninteractive
-
-      apt-get update -qq
-
-      apt-get install -y -qq \
-        autoconf \
-        automake \
-        libtool \
-        pkg-config \
-        g++ \
-        make \
-        wget \
-        cmake \
-        nasm \
-        patchelf \
-        file \
-        binutils
-
-      export PREFIX=/usr/local
-      export OUT=/workspace/package/usr
-
-      export CFLAGS="-Os -fPIC"
-      export CXXFLAGS="-Os -fPIC"
-
-      mkdir -p "$PREFIX"
-      mkdir -p "$OUT/bin"
-      mkdir -p "$OUT/lib"
-
-      # ========================================
-      # Restore cached prefix
-      # ========================================
-
-      if [ -d /prefix-cache/prefix ]; then
-        echo "=== Restoring cached prefix ==="
-        cp -a /prefix-cache/prefix/. "$PREFIX/"
-      fi
-
-      export PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig:$PREFIX/share/pkgconfig"
-      export LD_LIBRARY_PATH="$PREFIX/lib"
-
-      # ========================================
-      # ZLIB
-      # ========================================
-
-      if [ ! -f "$PREFIX/lib/libz.a" ]; then
-
-        echo "========================================"
-        echo " Building zlib"
-        echo "========================================"
-
-        rm -rf zlib-1.3.1
-        rm -f zlib-1.3.1.tar.gz
-
-        wget -q --no-check-certificate \
-          https://zlib.net/fossils/zlib-1.3.1.tar.gz
-
-        tar -xzf zlib-1.3.1.tar.gz
-
-        cd zlib-1.3.1
-
-        ./configure \
-          --prefix="$PREFIX" \
-          --static
-
-        make -j$(nproc)
-        make install
-
-        cd ..
-      else
-        echo "=== zlib already available ==="
-      fi
-
-      # ========================================
-      # LIBPNG
-      # ========================================
-
-      if [ ! -f "$PREFIX/lib/libpng16.a" ]; then
-
-        echo "========================================"
-        echo " Building libpng"
-        echo "========================================"
-
-        rm -rf libpng-1.6.40
-        rm -f libpng-1.6.40.tar.gz
-
-        wget -q --no-check-certificate \
-          https://download.sourceforge.net/libpng/libpng-1.6.40.tar.gz
-
-        tar -xzf libpng-1.6.40.tar.gz
-
-        cd libpng-1.6.40
-
-        ./configure \
-          --prefix="$PREFIX" \
-          --disable-shared \
-          --enable-static
-
-        make -j$(nproc)
-        make install
-
-        cd ..
-      else
-        echo "=== libpng already available ==="
-      fi
-
-      # ========================================
-      # LIBJPEG-TURBO
-      # ========================================
-
-      if [ ! -f "$PREFIX/lib/libjpeg.a" ]; then
-
-        echo "========================================"
-        echo " Building libjpeg-turbo"
-        echo "========================================"
-
-        rm -rf libjpeg-turbo-3.1.1
-        rm -f libjpeg-turbo-3.1.1.tar.gz
-
-        wget -q --no-check-certificate \
-          https://github.com/libjpeg-turbo/libjpeg-turbo/releases/download/3.1.1/libjpeg-turbo-3.1.1.tar.gz
-
-        tar -xzf libjpeg-turbo-3.1.1.tar.gz
-
-        cd libjpeg-turbo-3.1.1
-
-        mkdir build
-        cd build
-
-        cmake .. \
-          -DCMAKE_INSTALL_PREFIX="$PREFIX" \
-          -DCMAKE_INSTALL_LIBDIR=lib \
-          -DCMAKE_BUILD_TYPE=Release \
-          -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
-          -DENABLE_SHARED=OFF \
-          -DENABLE_STATIC=ON \
-          -DWITH_12BIT=OFF \
-          -DWITH_JPEG8=ON \
-          -DWITH_TURBOJPEG=OFF
-
-        make -j$(nproc)
-        make install
-
-        cd ../..
-      else
-        echo "=== libjpeg-turbo already available ==="
-      fi
-
-      # ========================================
-      # LIBTIFF
-      # ========================================
-
-      if [ ! -f "$PREFIX/lib/libtiff.a" ]; then
-
-        echo "========================================"
-        echo " Building libtiff"
-        echo "========================================"
-
-        rm -rf tiff-4.7.0
-        rm -f tiff-4.7.0.tar.gz
-
-        wget -q --no-check-certificate \
-          https://download.osgeo.org/libtiff/tiff-4.7.0.tar.gz
-
-        tar -xzf tiff-4.7.0.tar.gz
-
-        cd tiff-4.7.0
-
-        ./configure \
-          --prefix="$PREFIX" \
-          --disable-shared \
-          --enable-static \
-          --disable-cxx \
-          --disable-jpeg12 \
-          --without-x \
-          --without-zstd \
-          --without-lzma \
-          --without-libdeflate \
-          --without-webp
-
-        make -j$(nproc)
-        make install
-
-        cd ..
-      else
-        echo "=== libtiff already available ==="
-      fi
-
-      # ========================================
-      # LEPTONICA
-      # ========================================
-
-      echo "========================================"
-      echo " Building Leptonica 1.87.0"
-      echo "========================================"
-
-      rm -rf leptonica-1.87.0
-      rm -f leptonica-1.87.0.tar.gz
-
-      wget -q --no-check-certificate \
-        https://github.com/DanBloomberg/leptonica/releases/download/1.87.0/leptonica-1.87.0.tar.gz
-
-      tar -xzf leptonica-1.87.0.tar.gz
-
-      cd leptonica-1.87.0
-
-      ./configure \
-        --prefix="$PREFIX" \
-        --libdir="$PREFIX/lib" \
-        --enable-shared \
-        --disable-static \
-        --disable-programs \
-        --without-giflib \
-        --without-libwebp \
-        --without-libopenjpeg \
-        --without-libwebpmux
-
-      make -j$(nproc)
-      make install
-
-      cd ..
-
-      # ========================================
-      # CHECK LEPTONICA
-      # ========================================
-
-      echo "========================================"
-      echo " Checking Leptonica"
-      echo "========================================"
-
-      export PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig:$PREFIX/share/pkgconfig"
-
-      echo "--- Leptonica files ---"
-
-      find "$PREFIX" \
-        -name "lept.pc" -o -name "liblept.so*" \
-        -print
-
-      echo "--- pkg-config ---"
-
-      pkg-config --exists lept
-
-      pkg-config --modversion lept
-      pkg-config --cflags lept
-      pkg-config --libs lept
-
-      echo "--- library ---"
-
-      ls -lah "$PREFIX/lib"/liblept.so*
-
-      # ========================================
-      # TESSERACT
-      # ========================================
-
-      echo "========================================"
-      echo " Building Tesseract 5.5.3"
-      echo "========================================"
-
-      rm -rf tesseract-5.5.3
-      rm -f tesseract-5.5.3.tar.gz
-      rm -rf /tmp/tess-install
-
-      wget -q --no-check-certificate \
-        https://github.com/tesseract-ocr/tesseract/archive/refs/tags/5.5.3.tar.gz
-
-      tar -xzf 5.5.3.tar.gz
-
-      cd tesseract-5.5.3
-
-      # ========================================
-      # Custom version text
-      # ========================================
-
-      sed -i \
-        's|tprintf("tesseract %s\\n", TessBaseAPI::Version());|tprintf("tesseract %s\\nCompile ByArian\\n", TessBaseAPI::Version());|' \
-        src/tesseract.cpp || true
-
-      # ========================================
-      # Tessdata paths
-      # ========================================
-
-      sed -i \
-        's|"/usr/share/tessdata/"|"/usr/share/tessdata/;/media/hdd/tessdata/;/media/usb/tessdata/"|g' \
-        src/ccutil/mainblk.cpp || true
-
-      ./autogen.sh
-
-      export CPPFLAGS="-I$PREFIX/include -I$PREFIX/include/leptonica"
-
-      export CXXFLAGS="-Os -fPIC \
-        -I$PREFIX/include \
-        -I$PREFIX/include/leptonica"
-
-      export LDFLAGS="-L$PREFIX/lib \
-        -Wl,-rpath,/usr/lib:/usr/local/lib"
-
-      export LIBS="-llept -lpng -ljpeg -ltiff -lz -lm"
-
-      echo "========================================"
-      echo " Tesseract configure"
-      echo "========================================"
-
-      ./configure \
-        --prefix="$PREFIX" \
-        --libdir="$PREFIX/lib" \
-        --enable-shared \
-        --disable-static \
-        --disable-debug \
-        --disable-icu \
-        --without-pango \
-        --without-cairo \
-        --without-libarchive \
-        --disable-training \
-        --disable-graphics \
-        --disable-opencl
-
-      echo "========================================"
-      echo " make"
-      echo "========================================"
-
-      make -j$(nproc)
-
-      echo "========================================"
-      echo " install"
-      echo "========================================"
-
-      make DESTDIR=/tmp/tess-install install
-
-      cd ..
-
-      # ========================================
-      # CACHE COMPLETE PREFIX
-      # ========================================
-
-      echo "========================================"
-      echo " Updating prefix cache"
-      echo "========================================"
-
-      rm -rf /prefix-cache/prefix
-      mkdir -p /prefix-cache/prefix
-
-      cp -a "$PREFIX/." \
-        /prefix-cache/prefix/
-
-      # ========================================
-      # FINAL PACKAGE
-      # ========================================
-
-      echo "========================================"
-      echo " Creating final package"
-      echo "========================================"
-
-      rm -rf /workspace/package
-
-      mkdir -p "$OUT/bin"
-      mkdir -p "$OUT/lib"
-
-      # ========================================
-      # TESSERACT EXECUTABLE
-      # ========================================
-
-      cp \
-        /tmp/tess-install"$PREFIX"/bin/tesseract \
-        "$OUT/bin/tesseract"
-
-      # ========================================
-      # LIBTESSERACT
-      # ========================================
-
-      TESS_SO=$(find \
-        /tmp/tess-install"$PREFIX"/lib \
-        -maxdepth 1 \
-        -type f \
-        -name "libtesseract.so.*.*.*" \
-        | head -n1)
-
-      if [ -z "$TESS_SO" ]; then
-        echo "ERROR: libtesseract not found"
-        exit 1
-      fi
-
-      cp "$TESS_SO" \
-        "$OUT/lib/libtesseract.so.5.5.3"
-
-      # ========================================
-      # LEPTONICA
-      # ========================================
-
-      LEPT_SO=$(find \
-        "$PREFIX/lib" \
-        -maxdepth 1 \
-        -type f \
-        -name "liblept.so.*.*.*" \
-        | head -n1)
-
-      if [ -z "$LEPT_SO" ]; then
-        echo "ERROR: Leptonica library not found"
-        exit 1
-      fi
-
-      cp "$LEPT_SO" \
-        "$OUT/lib/libleptonica.so.6.0.0"
-
-      # ========================================
-      # SONAME LINKS
-      # ========================================
-
-      cd "$OUT/lib"
-
-      ln -sf \
-        libtesseract.so.5.5.3 \
-        libtesseract.so.5
-
-      ln -sf \
-        libtesseract.so.5.5.3 \
-        libtesseract.so
-
-      ln -sf \
-        libleptonica.so.6.0.0 \
-        libleptonica.so.6
-
-      ln -sf \
-        libleptonica.so.6.0.0 \
-        libleptonica.so
-
-      cd /workspace
-
-      # ========================================
-      # PATCH
-      # ========================================
-
-      patchelf \
-        --replace-needed \
-        libtesseract.so.5 \
-        libtesseract.so.5.5.3 \
-        "$OUT/bin/tesseract" || true
-
-      patchelf \
-        --replace-needed \
-        liblept.so.6 \
-        libleptonica.so.6.0.0 \
-        "$OUT/bin/tesseract" || true
-
-      patchelf \
-        --set-rpath \
-        /usr/lib:/usr/local/lib \
-        "$OUT/bin/tesseract" || true
-
-      patchelf \
-        --set-rpath \
-        /usr/lib:/usr/local/lib \
-        "$OUT/lib/libtesseract.so.5.5.3" || true
-
-      # ========================================
-      # STRIP
-      # ========================================
-
-      strip --strip-unneeded \
-        "$OUT/bin/tesseract" || true
-
-      strip --strip-unneeded \
-        "$OUT/lib/libtesseract.so.5.5.3" || true
-
-      strip --strip-unneeded \
-        "$OUT/lib/libleptonica.so.6.0.0" || true
-
-      chmod 755 "$OUT/bin/tesseract"
-      chmod 755 "$OUT/lib/libtesseract.so.5.5.3"
-      chmod 755 "$OUT/lib/libleptonica.so.6.0.0"
-
-      # ========================================
-      # FINAL CHECKS
-      # ========================================
-
-      echo "========================================"
-      echo " FINAL FILES"
-      echo "========================================"
-
-      find /workspace/package \
-        -type f -o -type l \
-        | sort
-
-      echo "========================================"
-      echo " FILE TYPE"
-      echo "========================================"
-
-      file "$OUT/bin/tesseract"
-      file "$OUT/lib/libtesseract.so.5.5.3"
-      file "$OUT/lib/libleptonica.so.6.0.0"
-
-      echo "========================================"
-      echo " TESSERACT NEEDED"
-      echo "========================================"
-
-      readelf -d "$OUT/bin/tesseract" \
-        | grep NEEDED || true
-
-      echo "========================================"
-      echo " LIBTESSERACT NEEDED"
-      echo "========================================"
-
-      readelf -d "$OUT/lib/libtesseract.so.5.5.3" \
-        | grep NEEDED || true
-
-      echo "========================================"
-      echo " LEPTONICA NEEDED"
-      echo "========================================"
-
-      readelf -d "$OUT/lib/libleptonica.so.6.0.0" \
-        | grep NEEDED || true
-
-      echo "========================================"
-      echo " TESSERACT VERSION"
-      echo "========================================"
-
-      export LD_LIBRARY_PATH="$OUT/lib:$PREFIX/lib"
-
-      "$OUT/bin/tesseract" --version
-
-      echo "========================================"
-      echo " BUILD SUCCESS"
-      echo "========================================"
-
-      DOCKER_SCRIPT
-
-  - name: Upload Package
-    uses: actions/upload-artifact@v4
-    with:
-      name: tesseract-enigma2-armv7l-ocr-only
-      path: package/
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Cache prefix
+        uses: actions/cache@v4
+        with:
+          path: /tmp/prefix-cache
+          key: tesseract-armv7l-prefix-v4
+
+      - name: Build Tesseract ARMv7l
+        shell: bash
+        run: |
+          set -e
+          mkdir -p /tmp/prefix-cache
+          rm -rf package
+
+          docker run --rm --platform linux/arm/v7 \
+            -v "${{ github.workspace }}:/workspace" \
+            -v /tmp/prefix-cache:/prefix-cache \
+            -w /workspace \
+            ubuntu:22.04 \
+            /bin/bash <<'DOCKER_SCRIPT'
+          set -e
+
+          echo "========================================"
+          echo " Tesseract 5.5.3 ARMv7l"
+          echo " OCR ONLY BUILD"
+          echo "========================================"
+
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update -qq
+          apt-get install -y -qq \
+            autoconf \
+            automake \
+            libtool \
+            pkg-config \
+            g++ \
+            make \
+            wget \
+            cmake \
+            nasm \
+            patchelf \
+            file \
+            binutils
+
+          export PREFIX=/usr/local
+          export OUT=/workspace/package/usr
+          export CFLAGS="-Os -fPIC"
+          export CXXFLAGS="-Os -fPIC"
+
+          mkdir -p "$PREFIX"
+          mkdir -p "$OUT/bin"
+          mkdir -p "$OUT/lib"
+
+          # ========================================
+          # Restore cached prefix
+          # ========================================
+          if [ -d /prefix-cache/prefix ]; then
+            echo "=== Restoring cached prefix ==="
+            cp -a /prefix-cache/prefix/. "$PREFIX/"
+          fi
+
+          export PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig:$PREFIX/share/pkgconfig"
+          export LD_LIBRARY_PATH="$PREFIX/lib"
+
+          # ========================================
+          # ZLIB
+          # ========================================
+          if [ ! -f "$PREFIX/lib/libz.a" ]; then
+            echo "========================================"
+            echo " Building zlib"
+            echo "========================================"
+            rm -rf zlib-1.3.1
+            rm -f zlib-1.3.1.tar.gz
+            wget -q --no-check-certificate \
+              https://zlib.net/fossils/zlib-1.3.1.tar.gz
+            tar -xzf zlib-1.3.1.tar.gz
+            cd zlib-1.3.1
+            ./configure \
+              --prefix="$PREFIX" \
+              --static
+            make -j$(nproc)
+            make install
+            cd ..
+          else
+            echo "=== zlib already available ==="
+          fi
+
+          # ========================================
+          # LIBPNG
+          # ========================================
+          if [ ! -f "$PREFIX/lib/libpng16.a" ]; then
+            echo "========================================"
+            echo " Building libpng"
+            echo "========================================"
+            rm -rf libpng-1.6.40
+            rm -f libpng-1.6.40.tar.gz
+            wget -q --no-check-certificate \
+              https://download.sourceforge.net/libpng/libpng-1.6.40.tar.gz
+            tar -xzf libpng-1.6.40.tar.gz
+            cd libpng-1.6.40
+            ./configure \
+              --prefix="$PREFIX" \
+              --disable-shared \
+              --enable-static
+            make -j$(nproc)
+            make install
+            cd ..
+          else
+            echo "=== libpng already available ==="
+          fi
+
+          # ========================================
+          # LIBJPEG-TURBO
+          # ========================================
+          if [ ! -f "$PREFIX/lib/libjpeg.a" ]; then
+            echo "========================================"
+            echo " Building libjpeg-turbo"
+            echo "========================================"
+            rm -rf libjpeg-turbo-3.1.1
+            rm -f libjpeg-turbo-3.1.1.tar.gz
+            wget -q --no-check-certificate \
+              https://github.com/libjpeg-turbo/libjpeg-turbo/releases/download/3.1.1/libjpeg-turbo-3.1.1.tar.gz
+            tar -xzf libjpeg-turbo-3.1.1.tar.gz
+            cd libjpeg-turbo-3.1.1
+            mkdir build
+            cd build
+            cmake .. \
+              -DCMAKE_INSTALL_PREFIX="$PREFIX" \
+              -DCMAKE_INSTALL_LIBDIR=lib \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+              -DENABLE_SHARED=OFF \
+              -DENABLE_STATIC=ON \
+              -DWITH_12BIT=OFF \
+              -DWITH_JPEG8=ON \
+              -DWITH_TURBOJPEG=OFF
+            make -j$(nproc)
+            make install
+            cd ../..
+          else
+            echo "=== libjpeg-turbo already available ==="
+          fi
+
+          # ========================================
+          # LIBTIFF
+          # ========================================
+          if [ ! -f "$PREFIX/lib/libtiff.a" ]; then
+            echo "========================================"
+            echo " Building libtiff"
+            echo "========================================"
+            rm -rf tiff-4.7.0
+            rm -f tiff-4.7.0.tar.gz
+            wget -q --no-check-certificate \
+              https://download.osgeo.org/libtiff/tiff-4.7.0.tar.gz
+            tar -xzf tiff-4.7.0.tar.gz
+            cd tiff-4.7.0
+            ./configure \
+              --prefix="$PREFIX" \
+              --disable-shared \
+              --enable-static \
+              --disable-cxx \
+              --disable-jpeg12 \
+              --without-x \
+              --without-zstd \
+              --without-lzma \
+              --without-libdeflate \
+              --without-webp
+            make -j$(nproc)
+            make install
+            cd ..
+          else
+            echo "=== libtiff already available ==="
+          fi
+
+          # ========================================
+          # LEPTONICA
+          # ========================================
+          echo "========================================"
+          echo " Building Leptonica 1.87.0"
+          echo "========================================"
+          rm -rf leptonica-1.87.0
+          rm -f leptonica-1.87.0.tar.gz
+          wget -q --no-check-certificate \
+            https://github.com/DanBloomberg/leptonica/releases/download/1.87.0/leptonica-1.87.0.tar.gz
+          tar -xzf leptonica-1.87.0.tar.gz
+          cd leptonica-1.87.0
+          ./configure \
+            --prefix="$PREFIX" \
+            --libdir="$PREFIX/lib" \
+            --enable-shared \
+            --disable-static \
+            --disable-programs \
+            --without-giflib \
+            --without-libwebp \
+            --without-libopenjpeg \
+            --without-libwebpmux
+          make -j$(nproc)
+          make install
+          cd ..
+
+          # ========================================
+          # CHECK LEPTONICA
+          # ========================================
+          echo "========================================"
+          echo " Checking Leptonica"
+          echo "========================================"
+          export PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig:$PREFIX/share/pkgconfig"
+          echo "--- Leptonica files ---"
+          find "$PREFIX" \
+            \( -name "lept.pc" -o -name "liblept.so*" \) \
+            -print
+          echo "--- pkg-config ---"
+          pkg-config --exists lept
+          pkg-config --modversion lept
+          pkg-config --cflags lept
+          pkg-config --libs lept
+          echo "--- library ---"
+          ls -lah "$PREFIX/lib"/liblept.so*
+
+          # ========================================
+          # TESSERACT
+          # ========================================
+          echo "========================================"
+          echo " Building Tesseract 5.5.3"
+          echo "========================================"
+          rm -rf tesseract-5.5.3
+          rm -f tesseract-5.5.3.tar.gz
+          rm -rf /tmp/tess-install
+          wget -q --no-check-certificate \
+            https://github.com/tesseract-ocr/tesseract/archive/refs/tags/5.5.3.tar.gz
+          tar -xzf 5.5.3.tar.gz
+          cd tesseract-5.5.3
+
+          # ========================================
+          # Custom version text
+          # ========================================
+          sed -i \
+            's|tprintf("tesseract %s\\n", TessBaseAPI::Version());|tprintf("tesseract %s\\nCompile ByArian\\n", TessBaseAPI::Version());|' \
+            src/tesseract.cpp || true
+
+          # ========================================
+          # Tessdata paths
+          # ========================================
+          sed -i \
+            's|"/usr/share/tessdata/"|"/usr/share/tessdata/;/media/hdd/tessdata/;/media/usb/tessdata/"|g' \
+            src/ccutil/mainblk.cpp || true
+
+          ./autogen.sh
+
+          export CPPFLAGS="-I$PREFIX/include -I$PREFIX/include/leptonica"
+          export CXXFLAGS="-Os -fPIC \
+            -I$PREFIX/include \
+            -I$PREFIX/include/leptonica"
+          export LDFLAGS="-L$PREFIX/lib \
+            -Wl,-rpath,/usr/lib:/usr/local/lib"
+          export LIBS="-llept -lpng -ljpeg -ltiff -lz -lm"
+
+          echo "========================================"
+          echo " Tesseract configure"
+          echo "========================================"
+          ./configure \
+            --prefix="$PREFIX" \
+            --libdir="$PREFIX/lib" \
+            --enable-shared \
+            --disable-static \
+            --disable-debug \
+            --disable-icu \
+            --without-pango \
+            --without-cairo \
+            --without-libarchive \
+            --disable-training \
+            --disable-graphics \
+            --disable-opencl
+
+          echo "========================================"
+          echo " make"
+          echo "========================================"
+          make -j$(nproc)
+
+          echo "========================================"
+          echo " install"
+          echo "========================================"
+          make DESTDIR=/tmp/tess-install install
+          cd ..
+
+          # ========================================
+          # CACHE COMPLETE PREFIX
+          # ========================================
+          echo "========================================"
+          echo " Updating prefix cache"
+          echo "========================================"
+          rm -rf /prefix-cache/prefix
+          mkdir -p /prefix-cache/prefix
+          cp -a "$PREFIX/." \
+            /prefix-cache/prefix/
+
+          # ========================================
+          # FINAL PACKAGE
+          # ========================================
+          echo "========================================"
+          echo " Creating final package"
+          echo "========================================"
+          rm -rf /workspace/package
+          mkdir -p "$OUT/bin"
+          mkdir -p "$OUT/lib"
+
+          # ========================================
+          # TESSERACT EXECUTABLE
+          # ========================================
+          cp \
+            /tmp/tess-install"$PREFIX"/bin/tesseract \
+            "$OUT/bin/tesseract"
+
+          # ========================================
+          # LIBTESSERACT
+          # ========================================
+          TESS_SO=$(find \
+            /tmp/tess-install"$PREFIX"/lib \
+            -maxdepth 1 \
+            -type f \
+            -name "libtesseract.so.*.*.*" \
+            | head -n1)
+          if [ -z "$TESS_SO" ]; then
+            echo "ERROR: libtesseract not found"
+            exit 1
+          fi
+          cp "$TESS_SO" \
+            "$OUT/lib/libtesseract.so.5.5.3"
+
+          # ========================================
+          # LEPTONICA
+          # ========================================
+          LEPT_SO=$(find \
+            "$PREFIX/lib" \
+            -maxdepth 1 \
+            -type f \
+            -name "liblept.so.*.*.*" \
+            | head -n1)
+          if [ -z "$LEPT_SO" ]; then
+            echo "ERROR: Leptonica library not found"
+            exit 1
+          fi
+          cp "$LEPT_SO" \
+            "$OUT/lib/libleptonica.so.6.0.0"
+
+          # ========================================
+          # SONAME LINKS
+          # ========================================
+          cd "$OUT/lib"
+          ln -sf \
+            libtesseract.so.5.5.3 \
+            libtesseract.so.5
+          ln -sf \
+            libtesseract.so.5.5.3 \
+            libtesseract.so
+          ln -sf \
+            libleptonica.so.6.0.0 \
+            libleptonica.so.6
+          ln -sf \
+            libleptonica.so.6.0.0 \
+            libleptonica.so
+          cd /workspace
+
+          # ========================================
+          # PATCH
+          # ========================================
+          patchelf \
+            --replace-needed \
+            libtesseract.so.5 \
+            libtesseract.so.5.5.3 \
+            "$OUT/bin/tesseract" || true
+
+          patchelf \
+            --replace-needed \
+            liblept.so.6 \
+            libleptonica.so.6.0.0 \
+            "$OUT/bin/tesseract" || true
+
+          patchelf \
+            --set-rpath \
+            /usr/lib:/usr/local/lib \
+            "$OUT/bin/tesseract" || true
+
+          patchelf \
+            --set-rpath \
+            /usr/lib:/usr/local/lib \
+            "$OUT/lib/libtesseract.so.5.5.3" || true
+
+          # ========================================
+          # STRIP
+          # ========================================
+          strip --strip-unneeded \
+            "$OUT/bin/tesseract" || true
+          strip --strip-unneeded \
+            "$OUT/lib/libtesseract.so.5.5.3" || true
+          strip --strip-unneeded \
+            "$OUT/lib/libleptonica.so.6.0.0" || true
+
+          chmod 755 "$OUT/bin/tesseract"
+          chmod 755 "$OUT/lib/libtesseract.so.5.5.3"
+          chmod 755 "$OUT/lib/libleptonica.so.6.0.0"
+
+          # ========================================
+          # FINAL CHECKS
+          # ========================================
+          echo "========================================"
+          echo " FINAL FILES"
+          echo "========================================"
+          find /workspace/package \
+            -type f -o -type l \
+            | sort
+
+          echo "========================================"
+          echo " FILE TYPE"
+          echo "========================================"
+          file "$OUT/bin/tesseract"
+          file "$OUT/lib/libtesseract.so.5.5.3"
+          file "$OUT/lib/libleptonica.so.6.0.0"
+
+          echo "========================================"
+          echo " TESSERACT NEEDED"
+          echo "========================================"
+          readelf -d "$OUT/bin/tesseract" \
+            | grep NEEDED || true
+
+          echo "========================================"
+          echo " LIBTESSERACT NEEDED"
+          echo "========================================"
+          readelf -d "$OUT/lib/libtesseract.so.5.5.3" \
+            | grep NEEDED || true
+
+          echo "========================================"
+          echo " LEPTONICA NEEDED"
+          echo "========================================"
+          readelf -d "$OUT/lib/libleptonica.so.6.0.0" \
+            | grep NEEDED || true
+
+          echo "========================================"
+          echo " TESSERACT VERSION"
+          echo "========================================"
+          export LD_LIBRARY_PATH="$OUT/lib:$PREFIX/lib"
+          "$OUT/bin/tesseract" --version
+
+          echo "========================================"
+          echo " BUILD SUCCESS"
+          echo "========================================"
+          DOCKER_SCRIPT
+
+      - name: Upload Package
+        uses: actions/upload-artifact@v4
+        with:
+          name: tesseract-enigma2-armv7l-ocr-only
+          path: package/
