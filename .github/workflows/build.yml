@@ -48,7 +48,7 @@ jobs:
             make -j\$(nproc) && make install
             cd ..
 
-            # ===== 3. libjpeg-turbo (8-bit فقط، بدون 12-bit) =====
+            # ===== 3. libjpeg-turbo (8-bit فقط) =====
             wget -q --no-check-certificate https://github.com/libjpeg-turbo/libjpeg-turbo/releases/download/3.1.1/libjpeg-turbo-3.1.1.tar.gz
             tar -xzf libjpeg-turbo-3.1.1.tar.gz && cd libjpeg-turbo-3.1.1
             mkdir build && cd build
@@ -65,7 +65,7 @@ jobs:
             make -j\$(nproc) && make install
             cd ../..
 
-            # ===== 4. libtiff (بدون 12-bit وبدون أي extras) =====
+            # ===== 4. libtiff =====
             wget -q --no-check-certificate https://download.osgeo.org/libtiff/tiff-4.7.0.tar.gz
             tar -xzf tiff-4.7.0.tar.gz && cd tiff-4.7.0
             ./configure --prefix=\$PREFIX \
@@ -80,7 +80,7 @@ jobs:
             make -j\$(nproc) && make install
             cd ..
 
-            # ===== 5. Leptonica (shared، مربوط بالـ static libs) =====
+            # ===== 5. Leptonica =====
             wget -q --no-check-certificate https://github.com/DanBloomberg/leptonica/releases/download/1.87.0/leptonica-1.87.0.tar.gz
             tar -xzf leptonica-1.87.0.tar.gz && cd leptonica-1.87.0
             ./configure --prefix=\$PREFIX \
@@ -93,14 +93,11 @@ jobs:
             make -j\$(nproc) && make install
             cd ..
 
-            # ===== 6. Tesseract (OCR فقط) =====
+            # ===== 6. Tesseract =====
             wget -q --no-check-certificate https://github.com/tesseract-ocr/tesseract/archive/refs/tags/5.5.3.tar.gz
             tar -xzf 5.5.3.tar.gz && cd tesseract-5.5.3
 
-            # إضافة ByArian للإصدار
             sed -i 's|tprintf(\"tesseract %s\\n\", TessBaseAPI::Version());|tprintf(\"tesseract %s\\nCompile ByArian\\n\", TessBaseAPI::Version());|' src/tesseract.cpp
-
-            # مسارات tessdata لـ Enigma2
             sed -i 's|\"/usr/share/tessdata/\"|\"/usr/share/tessdata/;/media/hdd/tessdata/;/media/usb/tessdata/\"|g' src/ccutil/mainblk.cpp || true
 
             ./autogen.sh
@@ -115,13 +112,13 @@ jobs:
               --disable-training \
               --disable-graphics \
               --disable-opencl \
-              LEPTONICA_CFLAGS=\"-I\$PREFIX/include/leptonica\" \
+              LEPTONICA_CFLAGS=\"-I\$PREFIX/include -I\$PREFIX/include/leptonica\" \
               LEPTONICA_LIBS=\"-L\$PREFIX/lib -lleptonica\"
             make -j\$(nproc)
             make DESTDIR=/tmp/tess-install install
             cd ..
 
-            # ===== 7. نسخ الملفات النهائية الثلاثة فقط =====
+            # ===== 7. نسخ الملفات النهائية =====
             cp /tmp/tess-install\$PREFIX/bin/tesseract \$OUT/bin/
 
             TESS_SO=\$(find /tmp/tess-install\$PREFIX/lib -maxdepth 1 -name 'libtesseract.so.*.*.*' | head -n1)
@@ -142,16 +139,16 @@ jobs:
 
             chmod -R 777 \$OUT
 
-            # ===== تحقق نهائي =====
             echo '========================================='
             echo 'FINAL FILES:'
             find /workspace/package -type f | sort
             echo '-----------------------------------------'
             echo 'DEPS CHECK:'
+            echo '--- tesseract ---'
             readelf -d \$OUT/bin/tesseract | grep NEEDED
-            echo '---'
+            echo '--- libtesseract ---'
             readelf -d \$OUT/lib/libtesseract.so.5.5.3 | grep NEEDED
-            echo '---'
+            echo '--- libleptonica ---'
             readelf -d \$OUT/lib/libleptonica.so.6.0.0 | grep NEEDED
             echo '========================================='
           "
