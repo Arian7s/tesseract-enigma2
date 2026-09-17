@@ -60,13 +60,16 @@ jobs:
             tar -xzf libjpeg-turbo-3.1.1.tar.gz
             cd libjpeg-turbo-3.1.1
             mkdir build && cd build
-            cmake -DCMAKE_INSTALL_PREFIX=\$PREFIX -DCMAKE_BUILD_TYPE=Release \
-                  -DENABLE_SHARED=OFF -DENABLE_STATIC=ON \
+            cmake -DCMAKE_INSTALL_PREFIX=\$PREFIX \
+                  -DCMAKE_BUILD_TYPE=Release \
+                  -DCMAKE_INSTALL_LIBDIR=lib \
+                  -DCMAKE_INSTALL_INCLUDEDIR=include \
+                  -DENABLE_SHARED=OFF \
+                  -DENABLE_STATIC=ON \
                   -DWITH_12BIT=ON \
                   -DCMAKE_POSITION_INDEPENDENT_CODE=ON ..
             make -j\$(nproc)
             make install
-            # Create libjpeg12.a as a copy of libjpeg.a to satisfy linker
             cp \$PREFIX/lib/libjpeg.a \$PREFIX/lib/libjpeg12.a
             cd ../..
 
@@ -79,16 +82,32 @@ jobs:
             make install
             cd ..
 
-            echo '=== 5. Building Leptonica (shared) ==='
+            echo '=== 5. Building Leptonica (shared + static) ==='
             wget --no-check-certificate https://github.com/DanBloomberg/leptonica/releases/download/1.87.0/leptonica-1.87.0.tar.gz
             tar -xzf leptonica-1.87.0.tar.gz
             cd leptonica-1.87.0
-            ./configure --prefix=\$PREFIX --enable-shared --disable-static CFLAGS='-Os' CXXFLAGS='-Os'
-            # Patch Makefiles to also link against libjpeg12.a
-            find . -name 'Makefile' -exec sed -i 's|-ljpeg|-ljpeg -ljpeg12|g' {} \;
-            find . -name 'Makefile' -exec sed -i 's|-ltiff|-ltiff -ljpeg12|g' {} \;
+            ./configure --prefix=\$PREFIX \
+                        --enable-shared \
+                        --enable-static \
+                        CFLAGS='-Os -fPIC' \
+                        CXXFLAGS='-Os -fPIC'
             make -j\$(nproc)
             make install
+
+            echo '--- Merging static deps into libleptonica.so ---'
+            LEPT_SO=\$(find \$PREFIX/lib -maxdepth 1 -name 'libleptonica.so.*.*.*' -type f | head -n1)
+            echo \"Rebuilding: \$LEPT_SO\"
+            g++ -shared -fPIC \
+                -Wl,--whole-archive \
+                  \$PREFIX/lib/libleptonica.a \
+                  \$PREFIX/lib/libz.a \
+                  \$PREFIX/lib/libpng.a \
+                  \$PREFIX/lib/libjpeg.a \
+                  \$PREFIX/lib/libtiff.a \
+                -Wl,--no-whole-archive \
+                -o \"\$LEPT_SO\" \
+                -lm
+            echo 'libleptonica.so rebuilt with all static deps merged'
             cd ..
 
             echo '=== 6. Building Tesseract (OCR only) ==='
@@ -96,37 +115,70 @@ jobs:
             tar -xzf 5.5.3.tar.gz
             cd tesseract-5.5.3
 
-            # Add ByArian to version output
             sed -i 's|tprintf(\"tesseract %s\\n\", TessBaseAPI::Version());|tprintf(\"tesseract %s\\nByArian\\n\", TessBaseAPI::Version());|' src/tesseract.cpp
-
-            # Adjust tessdata paths for Enigma2
             sed -i 's|\"/usr/share/tessdata/\"|\"/usr/share/tessdata/;/media/hdd/tessdata/;/media/usb/tessdata/\"|g' src/ccutil/mainblk.cpp || true
 
             ./autogen.sh
-            ./configure --prefix=\$PREFIX --disable-static --disable-debug \
-                        --disable-icu --without-pango --without-cairo --without-libarchive \
-                        --disable-training --disable-graphics --disable-opencl \
-                        CFLAGS='-Os' CXXFLAGS='-Os' \
+            ./configure --prefix=\$PREFIX \
+                        --disable-static \
+                        --enable-shared \
+                        --disable-debug \
+                        --disable-icu \
+                        --without-pango \
+                        --without-cairo \
+                        --without-libarchive \
+                        --disable-training \
+                        --disable-graphics \
+                        --disable-opencl \
+                        CFLAGS='-Os' \
+                        CXXFLAGS='-Os' \
                         LEPTONICA_CFLAGS=\"-I\$PREFIX/include -I\$PREFIX/include/leptonica\" \
                         LEPTONICA_LIBS=\"-L\$PREFIX/lib -lleptonica\"
             make -j\$(nproc)
             make DESTDIR=/tmp/tesseract-build install
+
+            echo '--- Merging libleptonica.a into libtesseract.so ---'
+            TESS_SO=\$(find /tmp/tesseract-build\$PREFIX/lib -maxdepth 1 -name 'libtesseract.so.*.*.*' -type f | head -n1)
+            TESS_A=\$(find \$PREFIX/lib -maxdepth 1 -name 'libtesseract.a' -type f | head -n1)
+            echo \"Rebuilding: \$TESS_SO\"
+
+            if [ -n \"\$TESS_A\" ]; then
+              g++ -shared -fPIC \
+                  -Wl,--whole-archive \
+                    \"\$TESS_A\" \
+                  -Wl,--no-whole-archive \
+                  -L\$PREFIX/lib -lleptonica \
+                  -o \"\$TESS_SO\" \
+                  -lm -lstdc++
+              echo 'libtesseract.so rebuilt with libleptonica merged'
+            else
+              echo 'WARNING: libtesseract.a not found, skipping merge step'
+            fi
             cd ..
 
-            echo '=== 7. Copying only the two main libraries ==='
-            cp /tmp/tesseract-build/usr/bin/tesseract \$SYSROOT_DIR/bin/
+            echo '=== 7. Copying final binaries ==='
+            cp /tmp/tesseract-build\$PREFIX/bin/tesseract \$SYSROOT_DIR/bin/
 
-            TESS_REAL=\$(find \$PREFIX/lib -maxdepth 1 -name 'libtesseract.so.*.*.*' -type f | head -n1)
+            TESS_REAL=\$(find /tmp/tesseract-build\$PREFIX/lib -maxdepth 1 -name 'libtesseract.so.*.*.*' -type f | head -n1)
             cp \"\$TESS_REAL\" \$SYSROOT_DIR/lib/libtesseract.so.5.5.3
 
             LEPT_REAL=\$(find \$PREFIX/lib -maxdepth 1 -name 'libleptonica.so.*.*.*' -type f | head -n1)
             cp \"\$LEPT_REAL\" \$SYSROOT_DIR/lib/libleptonica.so.6.0.0
 
-            echo '=== 8. Patching tesseract to use full library names ==='
+            echo '=== 8. Patching RPATH to use full library names ==='
             patchelf --replace-needed libtesseract.so.5 libtesseract.so.5.5.3 \$SYSROOT_DIR/bin/tesseract || true
             patchelf --replace-needed libleptonica.so.6 libleptonica.so.6.0.0 \$SYSROOT_DIR/bin/tesseract || true
+            patchelf --replace-needed libleptonica.so.6 libleptonica.so.6.0.0 \$SYSROOT_DIR/lib/libtesseract.so.5.5.3 || true
 
-            echo '=== 9. Stripping ==='
+            echo '=== 9. Verifying no unwanted deps remain ==='
+            echo '--- tesseract binary deps ---'
+            readelf -d \$SYSROOT_DIR/bin/tesseract | grep NEEDED || true
+            echo '--- libtesseract.so deps ---'
+            readelf -d \$SYSROOT_DIR/lib/libtesseract.so.5.5.3 | grep NEEDED || true
+            echo '--- libleptonica.so deps ---'
+            readelf -d \$SYSROOT_DIR/lib/libleptonica.so.6.0.0 | grep NEEDED || true
+
+            echo '=== 10. Stripping ==='
             strip --strip-unneeded \$SYSROOT_DIR/bin/tesseract || true
             strip --strip-unneeded \$SYSROOT_DIR/lib/libtesseract.so.5.5.3 || true
             strip --strip-unneeded \$SYSROOT_DIR/lib/libleptonica.so.6.0.0 || true
@@ -134,6 +186,8 @@ jobs:
 
             echo '=== Final Contents ==='
             find /workspace/package -type f -o -type l | sort
+            echo '=== File sizes ==='
+            ls -lh \$SYSROOT_DIR/bin/ \$SYSROOT_DIR/lib/
           "
 
     - name: Upload Complete Package
