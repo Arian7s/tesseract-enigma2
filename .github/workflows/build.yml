@@ -1,4 +1,4 @@
-name: Build Tesseract OCR for Enigma2 (ARMv7l - Standalone)
+name: Build Tesseract OCR for Enigma2 (ARMv7l - Perfect Match)
 
 on:
   workflow_dispatch:
@@ -14,7 +14,7 @@ jobs:
     - name: Set up QEMU
       uses: docker/setup-qemu-action@v3
 
-    - name: Build Standalone Tesseract for ARMv7l
+    - name: Build Exact Match Tesseract for ARMv7l
       run: |
         docker run --rm --platform linux/arm/v7 \
           -v ${{ github.workspace }}:/workspace \
@@ -25,17 +25,31 @@ jobs:
               autoconf automake libtool pkg-config g++ make wget file \
               git build-essential cmake yasm nasm
 
-            echo '--- Building Zlib ---'
+            echo '--- Building Zlib 1.3.2 ---'
             wget https://www.zlib.net/zlib-1.3.2.tar.gz || wget https://zlib.net/zlib-1.3.2.tar.gz
             tar -xzf zlib-1.3.2.tar.gz
             cd zlib-1.3.2 && ./configure --prefix=/usr && make -j$(nproc) && make install && cd ..
 
-            echo '--- Building LibPNG ---'
-            wget https://sourceforge.net/projects/libpng/files/libpng16/1.6.43/libpng-1.6.43.tar.gz
-            tar -xzf libpng-1.6.43.tar.gz
-            cd libpng-1.6.43 && ./configure --prefix=/usr && make -j$(nproc) && make install && cd ..
+            echo '--- Building Libjpeg-turbo 3.1.1 ---'
+            wget https://github.com/libjpeg-turbo/libjpeg-turbo/releases/download/3.1.1/libjpeg-turbo-3.1.1.tar.gz
+            tar -xzf libjpeg-turbo-3.1.1.tar.gz
+            mkdir build-jpeg && cd build-jpeg
+            cmake -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_BUILD_TYPE=Release ..
+            make -j$(nproc) && make install
+            cd ..
 
-            echo '--- Building Leptonica (1.87.0) ---'
+            echo '--- Building LibPNG 1.6.58 ---'
+            wget https://sourceforge.net/projects/libpng/files/libpng16/1.6.58/libpng-1.6.58.tar.gz || wget https://sourceforge.net/projects/libpng/files/libpng16/1.6.43/libpng-1.6.43.tar.gz
+            # في حال اختلاف الإصدار المتاح، نعتمد أحدث نسخة متوفرة
+            if [ -f libpng-1.6.58.tar.gz ]; then tar -xzf libpng-1.6.58.tar.gz && cd libpng-1.6.58; else tar -xzf libpng-1.6.43.tar.gz && cd libpng-1.6.43; fi
+            ./configure --prefix=/usr && make -j$(nproc) && make install && cd ..
+
+            echo '--- Building LibTIFF 4.7.2 ---'
+            wget https://download.osgeo.org/libtiff/tiff-4.7.2.tar.gz || wget https://download.osgeo.org/libtiff/old/tiff-4.7.2.tar.gz
+            tar -xzf tiff-4.7.2.tar.gz
+            cd tiff-4.7.2 && ./configure --prefix=/usr && make -j$(nproc) && make install && cd ..
+
+            echo '--- Building Leptonica 1.87.0 ---'
             wget --no-check-certificate https://github.com/DanBloomberg/leptonica/releases/download/1.87.0/leptonica-1.87.0.tar.gz
             tar -xzf leptonica-1.87.0.tar.gz
             cd leptonica-1.87.0
@@ -45,11 +59,13 @@ jobs:
             make install
             cd ..
 
-            echo '--- Building Tesseract (5.5.3) ---'
+            echo '--- Building Tesseract 5.5.3 with Compile ByArian ---'
             wget --no-check-certificate https://github.com/tesseract-ocr/tesseract/archive/refs/tags/5.5.3.tar.gz
             tar -xzf 5.5.3.tar.gz
             cd tesseract-5.5.3
 
+            # حقن توقيعك Compile ByArian بشكل دقيق ليظهر في أمر الاصدار
+            sed -i 's/m4_define(\[tesseract_version\], \[5.5.3\])/m4_define(\[tesseract_version\], \[5.5.3\nCompile ByArian\])/g' configure.ac || true
             sed -i 's|\"/usr/share/tessdata/\"|\"/usr/share/tessdata/;/media/hdd/tessdata/;/media/usb/tessdata/\"|g' src/ccutil/mainblk.cpp || true
 
             ./autogen.sh
@@ -66,33 +82,33 @@ jobs:
             mkdir -p package/usr/lib
             mkdir -p package/usr/share/tessdata
 
-            # نسخ الملف التنفيذي
+            # 1. نسخ ملف الـ tesseract التنفيذي
             cp /tmp/tesseract-build/usr/bin/tesseract package/usr/bin/
 
-            # البحث عن مكتبة tesseract أينما وجدت في مجلد البناء ونسخها بالاسم المطلوب
+            # 2. جلب ونسخ مكتبة tesseract وضبط اسمها بدقة مطلقة إلى libtesseract.so.5.5.3
             find /tmp/tesseract-build -name 'libtesseract.so*' -exec cp -P {} package/usr/lib/ \;
-            
-            # التأكد من وجود ملف بالاسم المطلوب بالذات
-            if [ -f package/usr/lib/libtesseract.so.5.5.3 ]; then
-              echo 'Tesseract library found successfully.'
-            else
-              # إذا كانت باسم آخر، إعادة تسميتها أو عمل الروابط المطلوبة
-              LATEST_TESS=$(ls package/usr/lib/libtesseract.so.*.*.* | head -n 1)
-              if [ ! -z \"\$LATEST_TESS\" ]; then
-                cp \"\$LATEST_TESS\" package/usr/lib/libtesseract.so.5.5.3
-              fi
+            FOUND_TESS=$(ls package/usr/lib/libtesseract.so.*.*.* | head -n 1)
+            if [ ! -z \"\$FOUND_TESS\" ]; then
+              cp \"\$FOUND_TESS\" package/usr/lib/libtesseract.so.5.5.3
+            elif [ -f package/usr/lib/libtesseract.so.5.0.5 ]; then
+              mv package/usr/lib/libtesseract.so.5.0.5 package/usr/lib/libtesseract.so.5.5.3
             fi
 
-            # نسخ مكتبات Leptonica والتأكد من وجود libleptonica.so.6.0.0
-            find /tmp/leptonica-build -name 'libleptonica.so*' -exec cp -P {} package/usr/lib/ \; || true
-            if [ ! -f package/usr/lib/libleptonica.so.6.0.0 ]; then
-              cp /usr/lib/arm-linux-gnueabihf/libleptonica.so* package/usr/lib/ || true
-            fi
+            # 3. نسخ مكتبة Leptonica وضبط اسمها بدقة إلى libleptonica.so.6.0.0
+            cp /tmp/leptonica-build/usr/lib/libleptonica.so.6.0.0 package/usr/lib/ || find /tmp/leptonica-build -name 'libleptonica.so.6.*' -exec cp {} package/usr/lib/libleptonica.so.6.0.0 \;
 
-            # ضبط الروابط الرمزية (Symlinks) للتأكد من استقرار عمل المكتبات
+            # تنظيف وإعداد الروابط الرمزية (Symlinks) الصحيحة
             cd package/usr/lib/
-            [ -f libtesseract.so.5.5.3 ] && ln -sf libtesseract.so.5.5.3 libtesseract.so.5 && ln -sf libtesseract.so.5.5.3 libtesseract.so
-            [ -f libleptonica.so.6.0.0 ] && ln -sf libleptonica.so.6.0.0 libleptonica.so.6 && ln -sf libleptonica.so.6.0.0 libleptonica.so
+            rm -f libtesseract.so*
+            rm -f libleptonica.so*
+
+            cp libtesseract.so.5.5.3 libtesseract.so.5.5.3
+            ln -sf libtesseract.so.5.5.3 libtesseract.so.5
+            ln -sf libtesseract.so.5.5.3 libtesseract.so
+
+            cp libleptonica.so.6.0.0 libleptonica.so.6.0.0
+            ln -sf libleptonica.so.6.0.0 libleptonica.so.6
+            ln -sf libleptonica.so.6.0.0 libleptonica.so
             cd /workspace
 
             echo '--- Stripping Binaries ---'
@@ -109,5 +125,5 @@ jobs:
     - name: Upload Complete Package
       uses: actions/upload-artifact@v4
       with:
-        name: tesseract-enigma2-armv7l-standalone-arian
+        name: tesseract-enigma2-armv7l-perfect-arian
         path: package/
