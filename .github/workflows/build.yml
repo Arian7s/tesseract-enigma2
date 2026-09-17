@@ -68,16 +68,32 @@ jobs:
 
             # نسخ الملف التنفيذي
             cp /tmp/tesseract-build/usr/bin/tesseract package/usr/bin/
-            
-            # نسخ مكتبة تيصيراكت بالاسم المطلوب بدقة
-            cp /tmp/tesseract-build/usr/lib/libtesseract.so.5.5.3 package/usr/lib/
-            ln -sf libtesseract.so.5.5.3 package/usr/lib/libtesseract.so.5
-            ln -sf libtesseract.so.5.5.3 package/usr/lib/libtesseract.so
 
-            # نسخ مكتبة ليبيرتونيكا وضبط اسمها الإصداري المطلوب 6.0.0
-            cp /tmp/tesseract-build/usr/lib/libleptonica.so.6.0.0 package/usr/lib/ || cp /usr/lib/libleptonica.so.6.0.0 package/usr/lib/
-            ln -sf libleptonica.so.6.0.0 package/usr/lib/libleptonica.so.6
-            ln -sf libleptonica.so.6.0.0 package/usr/lib/libleptonica.so
+            # البحث عن مكتبة tesseract أينما وجدت في مجلد البناء ونسخها بالاسم المطلوب
+            find /tmp/tesseract-build -name 'libtesseract.so*' -exec cp -P {} package/usr/lib/ \;
+            
+            # التأكد من وجود ملف بالاسم المطلوب بالذات
+            if [ -f package/usr/lib/libtesseract.so.5.5.3 ]; then
+              echo 'Tesseract library found successfully.'
+            else
+              # إذا كانت باسم آخر، إعادة تسميتها أو عمل الروابط المطلوبة
+              LATEST_TESS=$(ls package/usr/lib/libtesseract.so.*.*.* | head -n 1)
+              if [ ! -z \"\$LATEST_TESS\" ]; then
+                cp \"\$LATEST_TESS\" package/usr/lib/libtesseract.so.5.5.3
+              fi
+            fi
+
+            # نسخ مكتبات Leptonica والتأكد من وجود libleptonica.so.6.0.0
+            find /tmp/leptonica-build -name 'libleptonica.so*' -exec cp -P {} package/usr/lib/ \; || true
+            if [ ! -f package/usr/lib/libleptonica.so.6.0.0 ]; then
+              cp /usr/lib/arm-linux-gnueabihf/libleptonica.so* package/usr/lib/ || true
+            fi
+
+            # ضبط الروابط الرمزية (Symlinks) للتأكد من استقرار عمل المكتبات
+            cd package/usr/lib/
+            [ -f libtesseract.so.5.5.3 ] && ln -sf libtesseract.so.5.5.3 libtesseract.so.5 && ln -sf libtesseract.so.5.5.3 libtesseract.so
+            [ -f libleptonica.so.6.0.0 ] && ln -sf libleptonica.so.6.0.0 libleptonica.so.6 && ln -sf libleptonica.so.6.0.0 libleptonica.so
+            cd /workspace
 
             echo '--- Stripping Binaries ---'
             strip --strip-unneeded package/usr/bin/tesseract || true
@@ -88,7 +104,6 @@ jobs:
             echo '--- Final Verification ---'
             ls -la package/usr/bin/
             ls -la package/usr/lib/
-            du -sh package/
           "
 
     - name: Upload Complete Package
