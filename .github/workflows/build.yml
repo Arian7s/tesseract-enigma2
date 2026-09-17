@@ -4,51 +4,50 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-armv7l:
+
+  # ===== المرحلة 1: بناء المكتبات الأساسية =====
+  build-libs:
     runs-on: ubuntu-22.04
-
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
+    - uses: actions/checkout@v4
+    - uses: docker/setup-qemu-action@v3
 
-    - name: Set up QEMU
-      uses: docker/setup-qemu-action@v3
+    - name: Cache libs
+      id: cache-libs
+      uses: actions/cache@v4
+      with:
+        path: /tmp/prefix-cache
+        key: libs-zlib-1.3.1-png-1.6.40-jpeg-3.1.1-tiff-4.7.0
 
-    - name: Build Tesseract OCR
+    - name: Build zlib, libpng, libjpeg, libtiff
+      if: steps.cache-libs.outputs.cache-hit != 'true'
       run: |
         docker run --rm --platform linux/arm/v7 \
-          -v ${{ github.workspace }}:/workspace \
-          -w /workspace \
+          -v /tmp/prefix-cache:/prefix \
           ubuntu:22.04 /bin/bash -c "
             set -e
+            apt-get update -qq && apt-get install -y -qq \
+              autoconf automake libtool pkg-config g++ make wget cmake nasm
 
-            apt-get update && apt-get install -y \
-              autoconf automake libtool pkg-config \
-              g++ make wget cmake nasm patchelf
-
-            export PREFIX=/usr
-            export OUT=/workspace/package\$PREFIX
-            mkdir -p \$OUT/bin \$OUT/lib
-
-            export PKG_CONFIG_PATH=\$PREFIX/lib/pkgconfig
+            export PREFIX=/prefix
+            mkdir -p \$PREFIX/lib \$PREFIX/include \$PREFIX/lib/pkgconfig
             export CFLAGS='-Os -fPIC'
-            export CXXFLAGS='-Os -fPIC'
 
-            # ===== 1. zlib =====
+            echo '=== zlib ==='
             wget -q --no-check-certificate https://zlib.net/fossils/zlib-1.3.1.tar.gz
             tar -xzf zlib-1.3.1.tar.gz && cd zlib-1.3.1
             ./configure --prefix=\$PREFIX --static
             make -j\$(nproc) && make install
             cd ..
 
-            # ===== 2. libpng =====
+            echo '=== libpng ==='
             wget -q --no-check-certificate https://download.sourceforge.net/libpng/libpng-1.6.40.tar.gz
             tar -xzf libpng-1.6.40.tar.gz && cd libpng-1.6.40
             ./configure --prefix=\$PREFIX --disable-shared --enable-static
             make -j\$(nproc) && make install
             cd ..
 
-            # ===== 3. libjpeg-turbo (8-bit فقط) =====
+            echo '=== libjpeg-turbo ==='
             wget -q --no-check-certificate https://github.com/libjpeg-turbo/libjpeg-turbo/releases/download/3.1.1/libjpeg-turbo-3.1.1.tar.gz
             tar -xzf libjpeg-turbo-3.1.1.tar.gz && cd libjpeg-turbo-3.1.1
             mkdir build && cd build
@@ -58,42 +57,127 @@ jobs:
               -DCMAKE_INSTALL_INCLUDEDIR=include \
               -DCMAKE_BUILD_TYPE=Release \
               -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
-              -DENABLE_SHARED=OFF \
-              -DENABLE_STATIC=ON \
-              -DWITH_12BIT=OFF \
-              -DWITH_TURBOJPEG=OFF
+              -DENABLE_SHARED=OFF -DENABLE_STATIC=ON \
+              -DWITH_12BIT=OFF -DWITH_TURBOJPEG=OFF
             make -j\$(nproc) && make install
             cd ../..
 
-            # ===== 4. libtiff =====
+            echo '=== libtiff ==='
             wget -q --no-check-certificate https://download.osgeo.org/libtiff/tiff-4.7.0.tar.gz
             tar -xzf tiff-4.7.0.tar.gz && cd tiff-4.7.0
             ./configure --prefix=\$PREFIX \
-              --disable-shared --enable-static \
-              --disable-cxx \
-              --disable-jpeg12 \
-              --without-x \
-              --without-zstd \
-              --without-lzma \
-              --without-libdeflate \
-              --without-webp
+              --disable-shared --enable-static --disable-cxx \
+              --disable-jpeg12 --without-x --without-zstd \
+              --without-lzma --without-libdeflate --without-webp
             make -j\$(nproc) && make install
             cd ..
 
-            # ===== 5. Leptonica =====
+            echo 'DONE. Files:'
+            find \$PREFIX -type f | sort
+          "
+
+  # ===== المرحلة 2: بناء Leptonica =====
+  build-leptonica:
+    runs-on: ubuntu-22.04
+    needs: build-libs
+    steps:
+    - uses: actions/checkout@v4
+    - uses: docker/setup-qemu-action@v3
+
+    - name: Restore libs cache
+      uses: actions/cache@v4
+      with:
+        path: /tmp/prefix-cache
+        key: libs-zlib-1.3.1-png-1.6.40-jpeg-3.1.1-tiff-4.7.0
+
+    - name: Cache leptonica
+      id: cache-lept
+      uses: actions/cache@v4
+      with:
+        path: /tmp/lept-cache
+        key: leptonica-1.87.0
+
+    - name: Build Leptonica
+      if: steps.cache-lept.outputs.cache-hit != 'true'
+      run: |
+        docker run --rm --platform linux/arm/v7 \
+          -v /tmp/prefix-cache:/prefix \
+          -v /tmp/lept-cache:/lept-out \
+          ubuntu:22.04 /bin/bash -c "
+            set -e
+            apt-get update -qq && apt-get install -y -qq \
+              autoconf automake libtool pkg-config g++ make wget
+
+            export PREFIX=/prefix
+            export PKG_CONFIG_PATH=\$PREFIX/lib/pkgconfig
+            export CFLAGS='-Os -fPIC'
+            export CXXFLAGS='-Os -fPIC'
+            export CPPFLAGS=\"-I\$PREFIX/include\"
+            export LDFLAGS=\"-L\$PREFIX/lib\"
+
             wget -q --no-check-certificate https://github.com/DanBloomberg/leptonica/releases/download/1.87.0/leptonica-1.87.0.tar.gz
             tar -xzf leptonica-1.87.0.tar.gz && cd leptonica-1.87.0
             ./configure --prefix=\$PREFIX \
-              --enable-shared \
-              --disable-static \
-              --without-giflib \
-              --without-libwebp \
-              --without-libopenjpeg \
-              --without-libwebpmux
+              --enable-shared --disable-static \
+              --without-giflib --without-libwebp \
+              --without-libopenjpeg --without-libwebpmux
             make -j\$(nproc) && make install
-            cd ..
 
-            # ===== 6. Tesseract =====
+            mkdir -p /lept-out/lib /lept-out/include
+            cp -a \$PREFIX/lib/libleptonica* /lept-out/lib/
+            cp -a \$PREFIX/include/leptonica /lept-out/include/
+            cp -a \$PREFIX/lib/pkgconfig/lept.pc /lept-out/lib/pkgconfig/ 2>/dev/null || true
+
+            echo 'Leptonica DONE:'
+            find /lept-out -type f | sort
+          "
+
+  # ===== المرحلة 3: بناء Tesseract =====
+  build-tesseract:
+    runs-on: ubuntu-22.04
+    needs: build-leptonica
+    steps:
+    - uses: actions/checkout@v4
+    - uses: docker/setup-qemu-action@v3
+
+    - name: Restore libs cache
+      uses: actions/cache@v4
+      with:
+        path: /tmp/prefix-cache
+        key: libs-zlib-1.3.1-png-1.6.40-jpeg-3.1.1-tiff-4.7.0
+
+    - name: Restore leptonica cache
+      uses: actions/cache@v4
+      with:
+        path: /tmp/lept-cache
+        key: leptonica-1.87.0
+
+    - name: Build Tesseract
+      run: |
+        docker run --rm --platform linux/arm/v7 \
+          -v ${{ github.workspace }}:/workspace \
+          -v /tmp/prefix-cache:/prefix \
+          -v /tmp/lept-cache:/lept-cache \
+          -w /workspace \
+          ubuntu:22.04 /bin/bash -c "
+            set -e
+            apt-get update -qq && apt-get install -y -qq \
+              autoconf automake libtool pkg-config g++ make wget patchelf
+
+            export PREFIX=/prefix
+            export OUT=/workspace/package/usr
+            mkdir -p \$OUT/bin \$OUT/lib
+
+            # دمج leptonica في prefix
+            cp -a /lept-cache/lib/* \$PREFIX/lib/
+            cp -a /lept-cache/include/* \$PREFIX/include/
+
+            export PKG_CONFIG_PATH=\$PREFIX/lib/pkgconfig
+            export CPPFLAGS=\"-I\$PREFIX/include -I\$PREFIX/include/leptonica\"
+            export LDFLAGS=\"-L\$PREFIX/lib\"
+            export CFLAGS='-Os'
+            export CXXFLAGS='-Os'
+
             wget -q --no-check-certificate https://github.com/tesseract-ocr/tesseract/archive/refs/tags/5.5.3.tar.gz
             tar -xzf 5.5.3.tar.gz && cd tesseract-5.5.3
 
@@ -102,23 +186,15 @@ jobs:
 
             ./autogen.sh
             ./configure --prefix=\$PREFIX \
-              --enable-shared \
-              --disable-static \
-              --disable-debug \
-              --disable-icu \
-              --without-pango \
-              --without-cairo \
-              --without-libarchive \
-              --disable-training \
-              --disable-graphics \
-              --disable-opencl \
-              LEPTONICA_CFLAGS=\"-I\$PREFIX/include -I\$PREFIX/include/leptonica\" \
-              LEPTONICA_LIBS=\"-L\$PREFIX/lib -lleptonica\"
+              --enable-shared --disable-static \
+              --disable-debug --disable-icu \
+              --without-pango --without-cairo \
+              --without-libarchive --disable-training \
+              --disable-graphics --disable-opencl
             make -j\$(nproc)
             make DESTDIR=/tmp/tess-install install
             cd ..
 
-            # ===== 7. نسخ الملفات النهائية =====
             cp /tmp/tess-install\$PREFIX/bin/tesseract \$OUT/bin/
 
             TESS_SO=\$(find /tmp/tess-install\$PREFIX/lib -maxdepth 1 -name 'libtesseract.so.*.*.*' | head -n1)
@@ -127,30 +203,21 @@ jobs:
             LEPT_SO=\$(find \$PREFIX/lib -maxdepth 1 -name 'libleptonica.so.*.*.*' | head -n1)
             cp \"\$LEPT_SO\" \$OUT/lib/libleptonica.so.6.0.0
 
-            # ===== 8. patchelf =====
             patchelf --replace-needed libtesseract.so.5 libtesseract.so.5.5.3 \$OUT/bin/tesseract || true
             patchelf --replace-needed libleptonica.so.6 libleptonica.so.6.0.0 \$OUT/bin/tesseract || true
             patchelf --replace-needed libleptonica.so.6 libleptonica.so.6.0.0 \$OUT/lib/libtesseract.so.5.5.3 || true
 
-            # ===== 9. strip =====
             strip --strip-unneeded \$OUT/bin/tesseract || true
             strip --strip-unneeded \$OUT/lib/libtesseract.so.5.5.3 || true
             strip --strip-unneeded \$OUT/lib/libleptonica.so.6.0.0 || true
-
             chmod -R 777 \$OUT
 
-            echo '========================================='
-            echo 'FINAL FILES:'
+            echo '===== FINAL FILES ====='
             find /workspace/package -type f | sort
-            echo '-----------------------------------------'
-            echo 'DEPS CHECK:'
-            echo '--- tesseract ---'
+            echo '===== DEPS ====='
             readelf -d \$OUT/bin/tesseract | grep NEEDED
-            echo '--- libtesseract ---'
             readelf -d \$OUT/lib/libtesseract.so.5.5.3 | grep NEEDED
-            echo '--- libleptonica ---'
             readelf -d \$OUT/lib/libleptonica.so.6.0.0 | grep NEEDED
-            echo '========================================='
           "
 
     - name: Upload Package
