@@ -1,4 +1,4 @@
-name: Build Whisper STT for Enigma2 (English Only)
+name: Build Whisper STT for Enigma2 (armv7l Only)
 
 on:
   push:
@@ -6,21 +6,9 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-enigma2:
-    name: Build for ${{ matrix.arch }}
+  build-armv7l:
+    name: Build for armv7l (Octagon / Vu+)
     runs-on: ubuntu-22.04
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: armv7l
-            compiler_prefix: arm-linux-gnueabihf
-            gcc_pkg: gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf
-            extra_cflags: "-mfpu=neon -mfloat-abi=hard"
-          - arch: aarch64
-            compiler_prefix: aarch64-linux-gnu
-            gcc_pkg: gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
-            extra_cflags: ""
 
     steps:
       - name: Checkout whisper.cpp Repository
@@ -32,7 +20,7 @@ jobs:
       - name: Install Cross Compiler & Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake build-essential curl wget ${{ matrix.gcc_pkg }}
+          sudo apt-get install -y cmake build-essential curl wget gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf
 
       - name: Download English Tiny Quantized Model (31MB)
         run: |
@@ -42,15 +30,15 @@ jobs:
           echo "Model downloaded successfully:"
           ls -lh models/ggml-tiny.en-q4_0.bin
 
-      - name: Configure CMake
+      - name: Configure CMake for armv7l
         run: |
           cmake -B build \
             -DCMAKE_SYSTEM_NAME=Linux \
-            -DCMAKE_SYSTEM_PROCESSOR=${{ matrix.arch }} \
-            -DCMAKE_C_COMPILER=${{ matrix.compiler_prefix }}-gcc \
-            -DCMAKE_CXX_COMPILER=${{ matrix.compiler_prefix }}-g++ \
-            -DCMAKE_C_FLAGS="${{ matrix.extra_cflags }}" \
-            -DCMAKE_CXX_FLAGS="${{ matrix.extra_cflags }}" \
+            -DCMAKE_SYSTEM_PROCESSOR=armv7l \
+            -DCMAKE_C_COMPILER=arm-linux-gnueabihf-gcc \
+            -DCMAKE_CXX_COMPILER=arm-linux-gnueabihf-g++ \
+            -DCMAKE_C_FLAGS="-mfpu=neon -mfloat-abi=hard" \
+            -DCMAKE_CXX_FLAGS="-mfpu=neon -mfloat-abi=hard" \
             -DCMAKE_BUILD_TYPE=Release \
             -DGGML_NATIVE=OFF \
             -DGGML_NEON=ON \
@@ -65,14 +53,16 @@ jobs:
         run: |
           mkdir -p package/bin package/lib package/models
           
-          # Copy binaries and shared objects
-          cp build/bin/whisper-cli package/bin/ 2>/dev/null || cp build/bin/main package/bin/whisper-cli
-          cp build/src/libwhisper.so package/lib/ 2>/dev/null || cp build/libwhisper.so package/lib/
+          # البحث عن الملف التنفيذي ونقله تلقائياً
+          find build/ -type f \( -name "whisper-cli" -o -name "main" \) -exec cp {} package/bin/whisper-cli \;
           
-          # Copy English Model
+          # البحث عن جميع ملفات المكتبات (.so) ونقلها تلقائياً بغض النظر عن موقعها
+          find build/ -type f -name "*.so*" -exec cp {} package/lib/ \;
+          
+          # نسخ نموذج اللغة الإنجليزية
           cp models/ggml-tiny.en-q4_0.bin package/models/
           
-          # Create helper execution script
+          # إنشاء سكربت التجربة المساعد
           cat << 'EOF' > package/test_stt.sh
           #!/bin/sh
           DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -81,13 +71,13 @@ jobs:
           EOF
           chmod +x package/test_stt.sh package/bin/whisper-cli
 
-          # Compress to tar.gz
+          # ضغط الحزمة النهائية
           cd package
-          tar -czvf ../whisper-enigma2-${{ matrix.arch }}-english.tar.gz *
+          tar -czvf ../whisper-enigma2-armv7l-english.tar.gz *
 
       - name: Upload Build Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: whisper-enigma2-${{ matrix.arch }}-english
-          path: whisper-enigma2-${{ matrix.arch }}-english.tar.gz
+          name: whisper-enigma2-armv7l-english
+          path: whisper-enigma2-armv7l-english.tar.gz
           retention-days: 14
