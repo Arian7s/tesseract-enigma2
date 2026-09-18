@@ -1,4 +1,4 @@
-name: Build Whisper STT for Enigma2 (armv7l Only)
+name: Build Whisper STT (Fix OpenMP Freeze)
 
 on:
   push:
@@ -7,45 +7,43 @@ on:
 
 jobs:
   build-armv7l:
-    name: Build for armv7l (Octagon / Vu+)
+    name: Build for armv7l (No OpenMP)
     runs-on: ubuntu-22.04
 
     steps:
-      - name: Checkout whisper.cpp Repository
+      - name: Checkout whisper.cpp
         uses: actions/checkout@v4
         with:
           repository: 'ggerganov/whisper.cpp'
           fetch-depth: 1
 
-      - name: Install Cross Compiler & Dependencies
+      - name: Install Cross Compiler
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake build-essential curl wget gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf
+          sudo apt-get install -y cmake build-essential wget gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf
 
-      - name: Download English Tiny Quantized Model (31MB)
+      - name: Download Tiny English Model
         run: |
           mkdir -p models
-          curl -L -o models/ggml-tiny.en-q4_0.bin \
-            "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en-q4_0.bin"
-          echo "Model downloaded successfully:"
-          ls -lh models/ggml-tiny.en-q4_0.bin
+          wget --no-check-certificate -O models/ggml-tiny.en.bin "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin"
 
-      - name: Configure CMake for armv7l
+      - name: Configure CMake (Disabling OpenMP & Enforcing Pthreads)
         run: |
           cmake -B build \
             -DCMAKE_SYSTEM_NAME=Linux \
             -DCMAKE_SYSTEM_PROCESSOR=armv7l \
             -DCMAKE_C_COMPILER=arm-linux-gnueabihf-gcc \
             -DCMAKE_CXX_COMPILER=arm-linux-gnueabihf-g++ \
-            -DCMAKE_C_FLAGS="-mfpu=neon -mfloat-abi=hard" \
-            -DCMAKE_CXX_FLAGS="-mfpu=neon -mfloat-abi=hard" \
+            -DCMAKE_C_FLAGS="-mfpu=neon -mfloat-abi=hard -O3" \
+            -DCMAKE_CXX_FLAGS="-mfpu=neon -mfloat-abi=hard -O3" \
             -DCMAKE_BUILD_TYPE=Release \
+            -DGGML_OPENMP=OFF \
             -DGGML_NATIVE=OFF \
             -DGGML_NEON=ON \
             -DBUILD_SHARED_LIBS=ON \
             -DWHISPER_BUILD_EXAMPLES=ON
 
-      - name: Build Shared Library and CLI Binary
+      - name: Build
         run: |
           cmake --build build --config Release -j$(nproc)
 
@@ -53,31 +51,15 @@ jobs:
         run: |
           mkdir -p package/bin package/lib package/models
           
-          # البحث عن الملف التنفيذي ونقله تلقائياً
           find build/ -type f \( -name "whisper-cli" -o -name "main" \) -exec cp {} package/bin/whisper-cli \;
-          
-          # البحث عن جميع ملفات المكتبات (.so) ونقلها تلقائياً بغض النظر عن موقعها
           find build/ -type f -name "*.so*" -exec cp {} package/lib/ \;
+          cp models/ggml-tiny.en.bin package/models/
           
-          # نسخ نموذج اللغة الإنجليزية
-          cp models/ggml-tiny.en-q4_0.bin package/models/
-          
-          # إنشاء سكربت التجربة المساعد
-          cat << 'EOF' > package/test_stt.sh
-          #!/bin/sh
-          DIR="$(cd "$(dirname "$0")" && pwd)"
-          export LD_LIBRARY_PATH="$DIR/lib:$LD_LIBRARY_PATH"
-          "$DIR/bin/whisper-cli" -m "$DIR/models/ggml-tiny.en-q4_0.bin" -f "$1" -l en
-          EOF
-          chmod +x package/test_stt.sh package/bin/whisper-cli
-
-          # ضغط الحزمة النهائية
           cd package
-          tar -czvf ../whisper-enigma2-armv7l-english.tar.gz *
+          tar -czvf ../whisper-armv7l-no-openmp.tar.gz *
 
-      - name: Upload Build Artifacts
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: whisper-enigma2-armv7l-english
-          path: whisper-enigma2-armv7l-english.tar.gz
-          retention-days: 14
+          name: whisper-armv7l-no-openmp
+          path: whisper-armv7l-no-openmp.tar.gz
