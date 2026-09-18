@@ -44,8 +44,9 @@ jobs:
             tar -xzf tiff-4.7.2.tar.gz
             cd tiff-4.7.2 && ./configure --prefix=/usr && make -j$(nproc) && make install && cd ..
 
-            export CFLAGS='-I/usr/include -Os'
-            export LDFLAGS='-L/usr/lib'
+            export CFLAGS='-I/usr/include -I/usr/local/include -Os'
+            export LDFLAGS='-L/usr/lib -L/usr/local/lib'
+            export PKG_CONFIG_PATH='/usr/lib/pkgconfig:/usr/local/lib/pkgconfig:/usr/lib/arm-linux-gnueabihf/pkgconfig'
 
             wget --no-check-certificate https://github.com/DanBloomberg/leptonica/releases/download/1.87.0/leptonica-1.87.0.tar.gz
             tar -xzf leptonica-1.87.0.tar.gz
