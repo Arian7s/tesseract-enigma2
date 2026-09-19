@@ -47,8 +47,12 @@ jobs:
 
             mkdir -p package/usr/bin package/usr/lib package/usr/share/tessdata
             cp /usr/bin/tesseract package/usr/bin/
-            cp /usr/lib/libtesseract.so.5.5.3 package/usr/lib/
-            cp /usr/lib/libleptonica.so.6.0.0 package/usr/lib/
+
+            LIB_TESS=\$(find /usr/lib /usr/local/lib -type f -name 'libtesseract.so.*' | head -n 1)
+            cp \"\$LIB_TESS\" package/usr/lib/libtesseract.so.5.5.3
+
+            LIB_LEPT=\$(find /usr/lib /usr/local/lib -type f -name 'libleptonica.so.*' | head -n 1)
+            cp \"\$LIB_LEPT\" package/usr/lib/libleptonica.so.6.0.0
 
             cd package/usr/lib/
             ln -sf libtesseract.so.5.5.3 libtesseract.so.5
