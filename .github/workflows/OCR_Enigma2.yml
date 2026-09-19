@@ -59,12 +59,7 @@ jobs:
           export OBJCOPY="${HOST}-objcopy"
 
           rm -rf "$SYSROOT" "$PACKAGE_DIR"
-
-          mkdir -p \
-            "$SYSROOT" \
-            "$SYSROOT/lib" \
-            "$SYSROOT/include" \
-            "$PACKAGE_DIR"
+          mkdir -p "$SYSROOT" "$PACKAGE_DIR"
 
           export CPPFLAGS="-I${SYSROOT}/include"
           export CFLAGS="-fPIC -O2 -I${SYSROOT}/include"
@@ -81,14 +76,15 @@ jobs:
             local url="$1"
             local output="$2"
 
-            wget \
+            curl \
               --fail \
-              --show-progress \
-              --https-only \
+              --location \
+              --retry 5 \
+              --retry-delay 3 \
               --retry-connrefused \
-              --waitretry=3 \
-              --tries=5 \
-              -O "$output" \
+              --show-error \
+              --progress-bar \
+              --output "$output" \
               "$url"
           }
 
@@ -317,7 +313,7 @@ jobs:
             CFLAGS="-fPIC -O2 -I$SYSROOT/include -I$SYSROOT/include/leptonica" \
             CXXFLAGS="-fPIC -O2 -I$SYSROOT/include -I$SYSROOT/include/leptonica" \
             LDFLAGS="-L$SYSROOT/lib" \
-            LIBS="-llept -ltesseract -ltiff -lpng16 -ljpeg -lz" \
+            LIBS="-llept -ltiff -lpng16 -ljpeg -lz" \
             LEPTONICA_CFLAGS="-I$SYSROOT/include/leptonica" \
             LEPTONICA_LIBS="-L$SYSROOT/lib -llept"
 
@@ -330,7 +326,6 @@ jobs:
 
           cd "$WORK_DIR"
 
-          # Verify generated ARM libraries
           echo "Installed sysroot libraries:"
           find "$SYSROOT/lib" -maxdepth 1 -type f -o -type l | sort
 
@@ -348,15 +343,12 @@ jobs:
             exit 1
           fi
 
-          # Create package layout
           mkdir -p \
             "$PACKAGE_DIR/usr/bin" \
             "$PACKAGE_DIR/usr/lib" \
             "$PACKAGE_DIR/usr/share/tessdata"
 
-          cp -a \
-            "$SYSROOT/bin/tesseract" \
-            "$PACKAGE_DIR/usr/bin/"
+          cp -a "$SYSROOT/bin/tesseract" "$PACKAGE_DIR/usr/bin/"
 
           for library in \
             libz.so* \
@@ -376,18 +368,12 @@ jobs:
 
           if [ -d "$SYSROOT/lib/pkgconfig" ]; then
             mkdir -p "$PACKAGE_DIR/usr/lib/pkgconfig"
-            cp -a \
-              "$SYSROOT/lib/pkgconfig/"*.pc \
-              "$PACKAGE_DIR/usr/lib/pkgconfig/" 2>/dev/null || true
+            cp -a "$SYSROOT/lib/pkgconfig/"*.pc "$PACKAGE_DIR/usr/lib/pkgconfig/" 2>/dev/null || true
           fi
 
-          "$STRIP" --strip-unneeded \
-            "$PACKAGE_DIR/usr/bin/tesseract" || true
+          "$STRIP" --strip-unneeded "$PACKAGE_DIR/usr/bin/tesseract" || true
 
-          find "$PACKAGE_DIR/usr/lib" \
-            -type f \
-            -name '*.so*' \
-            -exec "$STRIP" --strip-unneeded {} \; || true
+          find "$PACKAGE_DIR/usr/lib" -type f -name '*.so*' -exec "$STRIP" --strip-unneeded {} \; || true
 
           chmod -R 755 "$PACKAGE_DIR"
 
