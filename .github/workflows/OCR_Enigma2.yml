@@ -34,10 +34,15 @@ jobs:
         export CXXFLAGS="-fPIC -Os -I$SYSROOT/include"
         export LDFLAGS="-L$SYSROOT/lib"
         export PKG_CONFIG_PATH="$SYSROOT/lib/pkgconfig"
+        export PKG_CONFIG_LIBDIR="$SYSROOT/lib/pkgconfig"
 
-        wget -O zlib-1.3.1.tar.gz https://github.com/madler/zlib/archive/refs/tags/v1.3.1.tar.gz
-        tar -xzf zlib-1.3.1.tar.gz
-        cd zlib-1.3.1 && ./configure --prefix=$SYSROOT --static && make -j$(nproc) && make install && cd ..
+        wget -O zlib-1.3.2.tar.gz https://github.com/madler/zlib/archive/refs/tags/v1.3.1.tar.gz
+        tar -xzf zlib-1.3.2.tar.gz
+        cd zlib-1.3.2
+        ./configure --prefix=$SYSROOT --static
+        make -j$(nproc)
+        make install
+        cd ..
 
         wget https://github.com/libjpeg-turbo/libjpeg-turbo/releases/download/3.2.0/libjpeg-turbo-3.2.0.tar.gz
         tar -xzf libjpeg-turbo-3.2.0.tar.gz
@@ -51,39 +56,46 @@ jobs:
               -DENABLE_STATIC=ON \
               -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
               -DCMAKE_BUILD_TYPE=Release ..
-        make -j$(nproc) && make install
+        make -j$(nproc)
+        make install
         cd ../..
 
         wget https://download.sourceforge.net/libpng/libpng-1.6.43.tar.gz || wget https://sourceforge.net/projects/libpng/files/libpng16/1.6.43/libpng-1.6.43.tar.gz
         tar -xzf libpng-1.6.43.tar.gz
         cd libpng-1.6.43
         ./configure --host=arm-linux-gnueabihf --prefix=$SYSROOT --disable-shared --enable-static --with-pic
-        make -j$(nproc) && make install && cd ..
+        make -j$(nproc)
+        make install
+        cd ..
 
         wget https://download.osgeo.org/libtiff/tiff-4.7.2.tar.gz
         tar -xzf tiff-4.7.2.tar.gz
         cd tiff-4.7.2
         ./configure --host=arm-linux-gnueabihf --prefix=$SYSROOT --disable-shared --enable-static --with-pic
-        make -j$(nproc) && make install && cd ..
+        make -j$(nproc)
+        make install
+        cd ..
 
         wget --no-check-certificate https://github.com/DanBloomberg/leptonica/releases/download/1.87.0/leptonica-1.87.0.tar.gz
         tar -xzf leptonica-1.87.0.tar.gz
         cd leptonica-1.87.0
         ./configure --host=arm-linux-gnueabihf --prefix=$SYSROOT --enable-shared --disable-static --with-libjpeg --with-libpng --with-libtiff --with-zlib
-        make -j$(nproc) && make install && cd ..
+        make -j$(nproc)
+        make install
+        cd ..
 
         mkdir -p $SYSROOT/lib/pkgconfig
-        cat << 'EOF' > $SYSROOT/lib/pkgconfig/lept.pc
-        prefix=/usr
-        exec_prefix=${prefix}
-        libdir=${prefix}/lib
-        includedir=${prefix}/include/leptonica
+        cat << EOF > $SYSROOT/lib/pkgconfig/lept.pc
+        prefix=$SYSROOT
+        exec_prefix=\${prefix}
+        libdir=\${prefix}/lib
+        includedir=\${prefix}/include/leptonica
 
         Name: leptonica
         Description: An open source C library for efficient image processing
         Version: 1.87.0
-        Libs: -L${libdir} -llept
-        Cflags: -I${includedir}
+        Libs: -L\${libdir} -llept
+        Cflags: -I\${includedir}
         EOF
 
         wget --no-check-certificate https://github.com/tesseract-ocr/tesseract/archive/refs/tags/5.5.3.tar.gz
@@ -94,8 +106,19 @@ jobs:
         sed -i 's|\"/usr/share/tessdata/\"|\"/usr/share/tessdata/;/media/hdd/tessdata/;/media/usb/tessdata/\"|g' src/ccutil/mainblk.cpp || true
 
         ./autogen.sh
-        ./configure --host=arm-linux-gnueabihf --prefix=$SYSROOT --disable-static --disable-debug --disable-icu --without-pango --without-cairo --without-libarchive lept_CFLAGS="-I$SYSROOT/include/leptonica" lept_LIBS="-L$SYSROOT/lib -llept"
-        make -j$(nproc) && make install && cd ..
+        ./configure --host=arm-linux-gnueabihf \
+                    --prefix=$SYSROOT \
+                    --disable-static \
+                    --disable-debug \
+                    --disable-icu \
+                    --without-pango \
+                    --without-cairo \
+                    --without-libarchive \
+                    LEPTONICA_CFLAGS="-I$SYSROOT/include/leptonica" \
+                    LEPTONICA_LIBS="-L$SYSROOT/lib -llept"
+        make -j$(nproc)
+        make install
+        cd ..
 
         mkdir -p package/usr/bin package/usr/lib package/usr/share/tessdata
 
