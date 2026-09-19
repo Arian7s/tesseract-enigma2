@@ -1,4 +1,4 @@
-name: Build Tesseract OCR for Enigma2 (ARMv7l - Static Deps)
+name: Build Tesseract OCR for Enigma2 (ARMv7l - Dynamic Search)
 
 on:
   workflow_dispatch:
@@ -20,8 +20,9 @@ jobs:
           -v ${{ github.workspace }}:/workspace \
           -w /workspace \
           ubuntu:22.04 /bin/bash -c "
+            set -e
             export DEBIAN_FRONTEND=noninteractive
-            
+
             apt-get update && apt-get install -y \
               autoconf automake libtool pkg-config g++ make wget file git cmake yasm nasm
 
@@ -45,22 +46,19 @@ jobs:
             tar -xzf libpng-1.6.43.tar.gz
             cd libpng-1.6.43
             ./configure --prefix=/usr --disable-shared --enable-static --with-pic
-            make -j\$(nproc) && make install
-            cd ..
+            make -j\$(nproc) && make install && cd ..
 
             wget https://download.osgeo.org/libtiff/tiff-4.7.2.tar.gz
             tar -xzf tiff-4.7.2.tar.gz
             cd tiff-4.7.2
             ./configure --prefix=/usr --disable-shared --enable-static --with-pic
-            make -j\$(nproc) && make install
-            cd ..
+            make -j\$(nproc) && make install && cd ..
 
             wget --no-check-certificate https://github.com/DanBloomberg/leptonica/releases/download/1.87.0/leptonica-1.87.0.tar.gz
             tar -xzf leptonica-1.87.0.tar.gz
             cd leptonica-1.87.0
             ./configure --prefix=/usr --enable-shared --disable-static --with-libjpeg --with-libpng --with-libtiff --with-zlib
-            make -j\$(nproc) && make install
-            cd ..
+            make -j\$(nproc) && make install && cd ..
 
             wget --no-check-certificate https://github.com/tesseract-ocr/tesseract/archive/refs/tags/5.5.3.tar.gz
             tar -xzf 5.5.3.tar.gz
@@ -71,21 +69,22 @@ jobs:
 
             ./autogen.sh
             ./configure --prefix=/usr --disable-static --disable-debug --disable-icu --without-pango --without-cairo --without-libarchive
-            make -j\$(nproc) && make install
-            cd ..
+            make -j\$(nproc) && make install && cd ..
 
             mkdir -p package/usr/bin package/usr/lib package/usr/share/tessdata
 
             cp /usr/bin/tesseract package/usr/bin/
-            cp /usr/lib/libtesseract.so.5.5.3 package/usr/lib/
-            cp /usr/lib/libleptonica.so.6.0.0 package/usr/lib/
 
-            cd package/usr/lib/
-            ln -sf libtesseract.so.5.5.3 libtesseract.so.5
-            ln -sf libtesseract.so.5.5.3 libtesseract.so
-            ln -sf libleptonica.so.6.0.0 libleptonica.so.6
-            ln -sf libleptonica.so.6.0.0 libleptonica.so
-            cd /workspace
+            TESS_FILE=\$(find /usr -name 'libtesseract.so*' -type f ! -type l | head -n 1)
+            LEPT_FILE=\$(find /usr -name 'libleptonica.so*' -type f ! -type l | head -n 1)
+
+            if [ -z \"\$TESS_FILE\" ]; then
+              echo "FATAL: libtesseract.so was not generated!"
+              exit 1
+            fi
+
+            cp \"\$TESS_FILE\" package/usr/lib/libtesseract.so.5.5.3
+            cp \"\$LEPT_FILE\" package/usr/lib/libleptonica.so.6.0.0
 
             strip --strip-all package/usr/bin/tesseract || true
             strip --strip-unneeded package/usr/lib/*.so* || true
@@ -95,5 +94,5 @@ jobs:
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: tesseract-enigma2-armv7l-integrated
+        name: tesseract-enigma2-armv7l-dynamic
         path: package/
