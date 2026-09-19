@@ -37,10 +37,11 @@ jobs:
 
             wget https://github.com/libjpeg-turbo/libjpeg-turbo/releases/download/3.2.0/libjpeg-turbo-3.2.0.tar.gz
             tar -xzf libjpeg-turbo-3.2.0.tar.gz
+            cd libjpeg-turbo-3.2.0
             mkdir build-jpeg && cd build-jpeg
             cmake -DCMAKE_INSTALL_PREFIX=/usr -DENABLE_SHARED=OFF -DENABLE_STATIC=ON -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DCMAKE_BUILD_TYPE=Release ..
             make -j\$(nproc) && make install
-            cd ..
+            cd ../..
 
             wget https://download.sourceforge.net/libpng/libpng-1.6.43.tar.gz || wget https://sourceforge.net/projects/libpng/files/libpng16/1.6.43/libpng-1.6.43.tar.gz
             tar -xzf libpng-1.6.43.tar.gz
