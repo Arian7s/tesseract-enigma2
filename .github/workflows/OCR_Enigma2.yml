@@ -51,7 +51,6 @@ jobs:
           export CXX="${HOST}-g++"
           export AR="${HOST}-ar"
           export AS="${HOST}-as"
-          export LD="${HOST}-ld"
           export RANLIB="${HOST}-ranlib"
           export STRIP="${HOST}-strip"
           export NM="${HOST}-nm"
@@ -60,26 +59,20 @@ jobs:
           rm -rf "$SYSROOT" "$PACKAGE_DIR"
 
           mkdir -p \
-            "$SYSROOT" \
+            "$SYSROOT/bin" \
             "$SYSROOT/include" \
             "$SYSROOT/lib" \
-            "$SYSROOT/bin" \
+            "$SYSROOT/share" \
+            "$SYSROOT/lib/pkgconfig" \
             "$PACKAGE_DIR"
 
           export PATH="$SYSROOT/bin:$PATH"
 
-          export COMMON_CPPFLAGS="-I$SYSROOT/include"
-          export COMMON_CFLAGS="-fPIC -O2 -I$SYSROOT/include"
-          export COMMON_CXXFLAGS="-fPIC -O2 -I$SYSROOT/include"
-          export COMMON_LDFLAGS="-L$SYSROOT/lib"
-
-          export PKG_CONFIG_SYSROOT_DIR="$SYSROOT"
-          export PKG_CONFIG_PATH="$SYSROOT/lib/pkgconfig:$SYSROOT/share/pkgconfig"
-          export PKG_CONFIG_LIBDIR="$SYSROOT/lib/pkgconfig:$SYSROOT/share/pkgconfig"
-
           download_file() {
             local url="$1"
             local output="$2"
+
+            echo "Downloading: $url"
 
             curl \
               --fail \
@@ -92,23 +85,27 @@ jobs:
               --output "$output" \
               "$url"
 
-            test -s "$output"
-          }
-
-          verify_arm_file() {
-            local path="$1"
-
-            if [ ! -e "$path" ] && [ ! -L "$path" ]; then
-              echo "Missing file: $path"
+            if [ ! -s "$output" ]; then
+              echo "Downloaded file is empty: $output"
               exit 1
             fi
-
-            file "$path"
           }
 
-          # ---------------------------------------------------------------
+          run_make() {
+            local directory="$1"
+            shift
+
+            if ! make -C "$directory" -j"$(nproc)" "$@"; then
+              echo "Build failed in: $directory"
+              find "$directory" -name 'config.log' -type f -print -exec tail -n 120 {} \; || true
+              find "$directory" -name '*.log' -type f -print -exec tail -n 80 {} \; || true
+              exit 1
+            fi
+          }
+
+          # ------------------------------------------------------------------
           # zlib 1.3.2
-          # ---------------------------------------------------------------
+          # ------------------------------------------------------------------
           cd "$WORK_DIR"
 
           download_file \
@@ -121,20 +118,20 @@ jobs:
           CC="$CC" \
           AR="$AR" \
           RANLIB="$RANLIB" \
-          CFLAGS="$COMMON_CFLAGS" \
+          CFLAGS="-fPIC -O2" \
           ./configure \
             --prefix="$SYSROOT" \
             --libdir="$SYSROOT/lib" \
             --shared
 
-          make -j"$(nproc)"
-          make install
+          run_make "$WORK_DIR/zlib-${ZLIB_VERSION}"
+          make -C "$WORK_DIR/zlib-${ZLIB_VERSION}" install
 
           cd "$WORK_DIR"
 
-          # ---------------------------------------------------------------
+          # ------------------------------------------------------------------
           # libjpeg-turbo 3.2.0
-          # ---------------------------------------------------------------
+          # ------------------------------------------------------------------
           download_file \
             "https://github.com/libjpeg-turbo/libjpeg-turbo/releases/download/${LIBJPEG_VERSION}/libjpeg-turbo-${LIBJPEG_VERSION}.tar.gz" \
             "libjpeg-turbo-${LIBJPEG_VERSION}.tar.gz"
@@ -142,11 +139,7 @@ jobs:
           tar -xzf "libjpeg-turbo-${LIBJPEG_VERSION}.tar.gz"
           cd "libjpeg-turbo-${LIBJPEG_VERSION}"
 
-          mkdir build
-          cd build
-
-          cmake .. \
-            -G Ninja \
+          cmake -S . -B build -G Ninja \
             -DCMAKE_SYSTEM_NAME=Linux \
             -DCMAKE_SYSTEM_PROCESSOR=armv7l \
             -DCMAKE_C_COMPILER="$CC" \
@@ -163,14 +156,14 @@ jobs:
             -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
             -DCMAKE_BUILD_TYPE=Release
 
-          cmake --build . --parallel "$(nproc)"
-          cmake --install .
+          cmake --build build --parallel "$(nproc)"
+          cmake --install build
 
           cd "$WORK_DIR"
 
-          # ---------------------------------------------------------------
+          # ------------------------------------------------------------------
           # libpng 1.6.58
-          # ---------------------------------------------------------------
+          # ------------------------------------------------------------------
           download_file \
             "https://download.sourceforge.net/libpng/libpng-${LIBPNG_VERSION}.tar.xz" \
             "libpng-${LIBPNG_VERSION}.tar.xz"
@@ -181,9 +174,9 @@ jobs:
           CC="$CC" \
           AR="$AR" \
           RANLIB="$RANLIB" \
-          CPPFLAGS="$COMMON_CPPFLAGS" \
-          CFLAGS="$COMMON_CFLAGS" \
-          LDFLAGS="$COMMON_LDFLAGS" \
+          CPPFLAGS="-I$SYSROOT/include" \
+          CFLAGS="-fPIC -O2 -I$SYSROOT/include" \
+          LDFLAGS="-L$SYSROOT/lib" \
           ./configure \
             --host="$HOST" \
             --build="$(gcc -dumpmachine)" \
@@ -193,14 +186,14 @@ jobs:
             --disable-static \
             --with-zlib-prefix="$SYSROOT"
 
-          make -j"$(nproc)"
-          make install
+          run_make "$WORK_DIR/libpng-${LIBPNG_VERSION}"
+          make -C "$WORK_DIR/libpng-${LIBPNG_VERSION}" install
 
           cd "$WORK_DIR"
 
-          # ---------------------------------------------------------------
+          # ------------------------------------------------------------------
           # libtiff 4.7.2
-          # ---------------------------------------------------------------
+          # ------------------------------------------------------------------
           download_file \
             "https://download.osgeo.org/libtiff/tiff-${LIBTIFF_VERSION}.tar.gz" \
             "tiff-${LIBTIFF_VERSION}.tar.gz"
@@ -211,9 +204,9 @@ jobs:
           CC="$CC" \
           AR="$AR" \
           RANLIB="$RANLIB" \
-          CPPFLAGS="$COMMON_CPPFLAGS" \
-          CFLAGS="$COMMON_CFLAGS" \
-          LDFLAGS="$COMMON_LDFLAGS" \
+          CPPFLAGS="-I$SYSROOT/include" \
+          CFLAGS="-fPIC -O2 -I$SYSROOT/include" \
+          LDFLAGS="-L$SYSROOT/lib -Wl,-rpath-link,$SYSROOT/lib" \
           ./configure \
             --host="$HOST" \
             --build="$(gcc -dumpmachine)" \
@@ -226,20 +219,21 @@ jobs:
             --with-jpeg-include-dir="$SYSROOT/include" \
             --with-jpeg-lib-dir="$SYSROOT/lib" \
             --with-zlib \
-            --with-zstd=no \
-            --with-lzma=no \
-            --with-webp=no \
-            --with-openjpeg=no \
-            --with-libdeflate=no
+            --disable-zstd \
+            --disable-lzma \
+            --disable-webp \
+            --disable-jbig \
+            --disable-jp2 \
+            --disable-libdeflate
 
-          make -j"$(nproc)"
-          make install
+          run_make "$WORK_DIR/tiff-${LIBTIFF_VERSION}"
+          make -C "$WORK_DIR/tiff-${LIBTIFF_VERSION}" install
 
           cd "$WORK_DIR"
 
-          # ---------------------------------------------------------------
+          # ------------------------------------------------------------------
           # Leptonica 1.87.0
-          # ---------------------------------------------------------------
+          # ------------------------------------------------------------------
           download_file \
             "https://github.com/DanBloomberg/leptonica/releases/download/${LEPTONICA_VERSION}/leptonica-${LEPTONICA_VERSION}.tar.gz" \
             "leptonica-${LEPTONICA_VERSION}.tar.gz"
@@ -248,12 +242,10 @@ jobs:
           cd "leptonica-${LEPTONICA_VERSION}"
 
           CC="$CC" \
-          CXX="$CXX" \
           AR="$AR" \
           RANLIB="$RANLIB" \
           CPPFLAGS="-I$SYSROOT/include -I$SYSROOT/include/leptonica" \
           CFLAGS="-fPIC -O2 -I$SYSROOT/include -I$SYSROOT/include/leptonica" \
-          CXXFLAGS="-fPIC -O2 -I$SYSROOT/include -I$SYSROOT/include/leptonica" \
           LDFLAGS="-L$SYSROOT/lib -Wl,-rpath-link,$SYSROOT/lib" \
           ./configure \
             --host="$HOST" \
@@ -279,14 +271,27 @@ jobs:
             ZLIB_CFLAGS="-I$SYSROOT/include" \
             ZLIB_LIBS="-L$SYSROOT/lib -lz"
 
-          make -j"$(nproc)"
-          make install
+          run_make "$WORK_DIR/leptonica-${LEPTONICA_VERSION}"
+          make -C "$WORK_DIR/leptonica-${LEPTONICA_VERSION}" install
+
+          cat > "$SYSROOT/lib/pkgconfig/lept.pc" <<EOF
+          prefix=$SYSROOT
+          exec_prefix=\${prefix}
+          libdir=\${prefix}/lib
+          includedir=\${prefix}/include/leptonica
+
+          Name: lept
+          Description: Leptonica image processing library
+          Version: $LEPTONICA_VERSION
+          Libs: -L\${libdir} -llept
+          Cflags: -I\${includedir}
+          EOF
 
           cd "$WORK_DIR"
 
-          # ---------------------------------------------------------------
+          # ------------------------------------------------------------------
           # Tesseract 5.5.3
-          # ---------------------------------------------------------------
+          # ------------------------------------------------------------------
           download_file \
             "https://github.com/tesseract-ocr/tesseract/archive/refs/tags/${TESSERACT_VERSION}.tar.gz" \
             "tesseract-${TESSERACT_VERSION}.tar.gz"
@@ -302,66 +307,91 @@ jobs:
             's|"/usr/share/tessdata/"|"/usr/share/tessdata/;/media/hdd/tessdata/;/media/usb/tessdata/";|g' \
             src/ccutil/mainblk.cpp || true
 
-          ./autogen.sh
+          cat > "$WORK_DIR/tesseract-toolchain.cmake" <<EOF
+          set(CMAKE_SYSTEM_NAME Linux)
+          set(CMAKE_SYSTEM_PROCESSOR armv7l)
 
-          # Clear inherited linker variables before configure.
-          unset LIBS
-          unset CPPFLAGS
-          unset CFLAGS
-          unset CXXFLAGS
-          unset LDFLAGS
+          set(CMAKE_C_COMPILER $CC)
+          set(CMAKE_CXX_COMPILER $CXX)
+          set(CMAKE_AR $AR)
+          set(CMAKE_RANLIB $RANLIB)
+          set(CMAKE_STRIP $STRIP)
 
-          CC="$CC" \
-          CXX="$CXX" \
-          AR="$AR" \
-          RANLIB="$RANLIB" \
-          CPPFLAGS="-I$SYSROOT/include -I$SYSROOT/include/leptonica" \
-          CFLAGS="-fPIC -O2 -I$SYSROOT/include -I$SYSROOT/include/leptonica" \
-          CXXFLAGS="-fPIC -O2 -I$SYSROOT/include -I$SYSROOT/include/leptonica" \
-          LDFLAGS="-L$SYSROOT/lib -Wl,-rpath-link,$SYSROOT/lib" \
-          LEPTONICA_CFLAGS="-I$SYSROOT/include/leptonica" \
-          LEPTONICA_LIBS="-L$SYSROOT/lib -Wl,-rpath-link,$SYSROOT/lib -llept -ltiff -lpng16 -ljpeg -lz" \
-          ./configure \
-            --host="$HOST" \
-            --build="$(gcc -dumpmachine)" \
-            --prefix="$SYSROOT" \
-            --libdir="$SYSROOT/lib" \
-            --enable-shared \
-            --disable-static \
-            --disable-debug \
-            --disable-icu \
-            --without-pango \
-            --without-cairo \
-            --without-libarchive \
-            --without-opencl
+          set(CMAKE_FIND_ROOT_PATH $SYSROOT)
+          set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
+          set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
+          set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
+          set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE ONLY)
 
-          make -j"$(nproc)"
-          make install
+          set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
 
-          cd "$WORK_DIR"
+          set(CMAKE_C_FLAGS_INIT "-fPIC -O2 -I$SYSROOT/include")
+          set(CMAKE_CXX_FLAGS_INIT "-fPIC -O2 -I$SYSROOT/include -I$SYSROOT/include/leptonica")
+          set(CMAKE_EXE_LINKER_FLAGS_INIT "-L$SYSROOT/lib -Wl,-rpath-link,$SYSROOT/lib")
+          set(CMAKE_SHARED_LINKER_FLAGS_INIT "-L$SYSROOT/lib -Wl,-rpath-link,$SYSROOT/lib")
+          EOF
 
-          # ---------------------------------------------------------------
-          # Validate the cross-compiled files
-          # ---------------------------------------------------------------
-          echo "Generated sysroot libraries:"
-          find "$SYSROOT/lib" -maxdepth 1 \( -type f -o -type l \) -print | sort
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE="$WORK_DIR/tesseract-toolchain.cmake" \
+            -DCMAKE_INSTALL_PREFIX="$SYSROOT" \
+            -DCMAKE_INSTALL_LIBDIR=lib \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="$SYSROOT" \
+            -DCMAKE_INCLUDE_PATH="$SYSROOT/include;$SYSROOT/include/leptonica" \
+            -DCMAKE_LIBRARY_PATH="$SYSROOT/lib" \
+            -DLeptonica_DIR="$SYSROOT/lib" \
+            -DLeptonica_INCLUDE_DIR="$SYSROOT/include/leptonica" \
+            -DLeptonica_LIBRARY="$SYSROOT/lib/liblept.so" \
+            -DOPENMP_BUILD=OFF \
+            -DBUILD_TESTS=OFF \
+            -DBUILD_TRAINING_TOOLS=OFF \
+            -DBUILD_TRAINING=OFF \
+            -DOPENCL_ENABLED=OFF \
+            -DGRAPHICS_DISABLED=ON \
+            -DUSE_SYSTEM_ICU=OFF \
+            -DDISABLE_CURL=ON \
+            -DSW_BUILD=OFF
 
-          verify_arm_file "$SYSROOT/bin/tesseract"
-          verify_arm_file "$SYSROOT/lib/libjpeg.so"
-          verify_arm_file "$SYSROOT/lib/libpng16.so"
-          verify_arm_file "$SYSROOT/lib/libtiff.so"
-          verify_arm_file "$SYSROOT/lib/libz.so"
-          verify_arm_file "$SYSROOT/lib/liblept.so"
-          verify_arm_file "$SYSROOT/lib/libtesseract.so"
-
-          if ! file "$SYSROOT/bin/tesseract" | grep -Eqi 'ARM'; then
-            echo "The Tesseract binary is not an ARM executable."
+          if ! cmake --build build --parallel "$(nproc)" --verbose; then
+            echo "Tesseract build failed."
+            find "$WORK_DIR/tesseract-${TESSERACT_VERSION}/build" \
+              -type f \
+              \( -name '*.log' -o -name 'CMakeError.log' \) \
+              -print \
+              -exec tail -n 160 {} \; || true
             exit 1
           fi
 
-          # ---------------------------------------------------------------
-          # Create the Enigma2 package
-          # ---------------------------------------------------------------
+          cmake --install build
+
+          cd "$WORK_DIR"
+
+          # ------------------------------------------------------------------
+          # Validate the generated files
+          # ------------------------------------------------------------------
+          echo "Generated libraries:"
+          find "$SYSROOT/lib" -maxdepth 1 \( -type f -o -type l \) -print | sort
+
+          test -x "$SYSROOT/bin/tesseract"
+          test -e "$SYSROOT/lib/libjpeg.so"
+          test -e "$SYSROOT/lib/libpng16.so"
+          test -e "$SYSROOT/lib/libtiff.so"
+          test -e "$SYSROOT/lib/libz.so"
+          test -e "$SYSROOT/lib/liblept.so"
+          test -e "$SYSROOT/lib/libtesseract.so"
+
+          file "$SYSROOT/bin/tesseract"
+          file "$SYSROOT/lib/libtesseract.so"
+          file "$SYSROOT/lib/liblept.so"
+
+          if ! file "$SYSROOT/bin/tesseract" | grep -Eqi 'ARM'; then
+            echo "The generated Tesseract binary is not an ARM binary."
+            exit 1
+          fi
+
+          # ------------------------------------------------------------------
+          # Create package
+          # ------------------------------------------------------------------
           mkdir -p \
             "$PACKAGE_DIR/usr/bin" \
             "$PACKAGE_DIR/usr/lib" \
@@ -385,14 +415,6 @@ jobs:
               fi
             done
           done
-
-          if [ -d "$SYSROOT/lib/pkgconfig" ]; then
-            mkdir -p "$PACKAGE_DIR/usr/lib/pkgconfig"
-
-            cp -a \
-              "$SYSROOT/lib/pkgconfig/"*.pc \
-              "$PACKAGE_DIR/usr/lib/pkgconfig/" 2>/dev/null || true
-          fi
 
           "$STRIP" --strip-unneeded \
             "$PACKAGE_DIR/usr/bin/tesseract" || true
