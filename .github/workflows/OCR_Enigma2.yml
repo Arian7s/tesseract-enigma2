@@ -1,22 +1,35 @@
-name: Build Tesseract OCR for Enigma2 ARMv7l - Cross Compile
+name: Build Tesseract 5.5.3 ARMv7l
 
 on:
   workflow_dispatch:
 
 jobs:
-  build-armv7l:
+  build:
     runs-on: ubuntu-22.04
 
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+    env:
+      TARGET: arm-linux-gnueabihf
+      SYSROOT: ${{ github.workspace }}/sysroot
+      BUILD: ${{ github.workspace }}/build
+      PREFIX: /usr
 
-      - name: Build ARMv7l
+      ZLIB_VERSION: 1.3.2
+      LIBPNG_VERSION: 1.6.58
+      LIBJPEG_VERSION: 3.2.0
+      LIBTIFF_VERSION: 4.7.2
+      LEPTONICA_VERSION: 1.87.0
+      TESSERACT_VERSION: 5.5.3
+
+    steps:
+
+      # ==========================================================
+      # PREPARE HOST
+      # ==========================================================
+
+      - name: Install build dependencies
         shell: bash
         run: |
-          set -Eeuo pipefail
-
-          export DEBIAN_FRONTEND=noninteractive
+          set -euxo pipefail
 
           sudo apt-get update
 
@@ -39,185 +52,180 @@ jobs:
             gcc-arm-linux-gnueabihf \
             g++-arm-linux-gnueabihf
 
-          export WORK_DIR="$GITHUB_WORKSPACE"
-          export SYSROOT="$WORK_DIR/sysroot"
-          export PACKAGE_DIR="$WORK_DIR/package"
-          export HOST="arm-linux-gnueabihf"
+      # ==========================================================
+      # PREPARE DIRECTORIES
+      # ==========================================================
 
-          export ZLIB_VERSION="1.3.2"
-          export LIBJPEG_VERSION="3.2.0"
-          export LIBPNG_VERSION="1.6.58"
-          export LIBTIFF_VERSION="4.7.2"
-          export LEPTONICA_VERSION="1.87.0"
-          export TESSERACT_VERSION="5.5.3"
-
-          export CC="${HOST}-gcc"
-          export CXX="${HOST}-g++"
-          export AR="${HOST}-ar"
-          export RANLIB="${HOST}-ranlib"
-          export STRIP="${HOST}-strip"
-          export NM="${HOST}-nm"
-          export OBJCOPY="${HOST}-objcopy"
-          export READELF="${HOST}-readelf"
+      - name: Prepare build environment
+        shell: bash
+        run: |
+          set -euxo pipefail
 
           rm -rf "$SYSROOT"
-          rm -rf "$PACKAGE_DIR"
+          rm -rf "$BUILD"
 
-          mkdir -p \
-            "$SYSROOT/bin" \
-            "$SYSROOT/include" \
-            "$SYSROOT/lib" \
-            "$SYSROOT/share" \
-            "$SYSROOT/lib/pkgconfig" \
-            "$PACKAGE_DIR/usr/bin" \
-            "$PACKAGE_DIR/usr/lib"
+          mkdir -p "$SYSROOT"
+          mkdir -p "$SYSROOT/include"
+          mkdir -p "$SYSROOT/lib"
+          mkdir -p "$SYSROOT/bin"
 
-          export PATH="$SYSROOT/bin:$PATH"
+          mkdir -p "$BUILD"
 
-          export CPPFLAGS="-I$SYSROOT/include"
-          export CFLAGS="-fPIC -O2 -fno-semantic-interposition"
-          export CXXFLAGS="-fPIC -O2 -fno-semantic-interposition"
-          export LDFLAGS="-L$SYSROOT/lib -Wl,-rpath-link,$SYSROOT/lib"
+          echo "TARGET=$TARGET"
+          echo "SYSROOT=$SYSROOT"
+          echo "BUILD=$BUILD"
 
-          export PKG_CONFIG_PATH="$SYSROOT/lib/pkgconfig"
-          export PKG_CONFIG_LIBDIR="$SYSROOT/lib/pkgconfig"
-          export PKG_CONFIG_SYSROOT_DIR="$SYSROOT"
+          "$TARGET-gcc" --version
+          "$TARGET-g++" --version
 
-          #
-          # =========================================================
-          # FUNCTIONS
-          # =========================================================
-          #
+      # ==========================================================
+      # DOWNLOAD SOURCES
+      # ==========================================================
 
-          download_file() {
-            local url="$1"
-            local output="$2"
+      - name: Download sources
+        shell: bash
+        run: |
+          set -euxo pipefail
 
-            echo "=========================================================="
-            echo "DOWNLOAD"
-            echo "$url"
-            echo "=========================================================="
-
-            curl -L \
-              --fail \
-              --retry 5 \
-              --retry-delay 3 \
-              -o "$output" \
-              "$url"
-          }
-
-          check_arm() {
-            local file="$1"
-
-            echo "=========================================================="
-            echo "CHECK ARM"
-            echo "$file"
-            echo "=========================================================="
-
-            "$READELF" -h "$file" |
-              grep -E 'Class:|Machine:|Type:' || true
-
-            "$READELF" -h "$file" |
-              grep -q 'Machine:.*ARM' || {
-                echo "ERROR: Not an ARM binary:"
-                echo "$file"
-                exit 1
-              }
-          }
-
-          check_no_external_image_libs() {
-            local file="$1"
-
-            echo "=========================================================="
-            echo "CHECK EXTERNAL IMAGE LIBRARIES"
-            echo "$file"
-            echo "=========================================================="
-
-            if "$READELF" -d "$file" |
-              grep -E \
-                'Shared library: \[(libjpeg|libpng|libtiff|libz)'; then
-
-              echo "ERROR: External image dependency detected."
-              exit 1
-            fi
-
-            echo "OK"
-          }
-
-          #
-          # =========================================================
-          # ZLIB 1.3.2
-          # =========================================================
-          #
-
-          cd "$WORK_DIR"
-
-          download_file \
-            "https://zlib.net/fossils/zlib-${ZLIB_VERSION}.tar.gz" \
-            "zlib-${ZLIB_VERSION}.tar.gz"
-
-          rm -rf "zlib-${ZLIB_VERSION}"
-          tar -xf "zlib-${ZLIB_VERSION}.tar.gz"
-
-          cd "zlib-${ZLIB_VERSION}"
+          cd "$BUILD"
 
           echo "=========================================================="
-          echo "BUILD ZLIB ${ZLIB_VERSION}"
+          echo "DOWNLOAD"
           echo "=========================================================="
 
-          CFLAGS="$CFLAGS" \
+          curl -L --fail --retry 5 \
+            -o "zlib-$ZLIB_VERSION.tar.xz" \
+            "https://zlib.net/fossils/zlib-$ZLIB_VERSION.tar.xz"
+
+          curl -L --fail --retry 5 \
+            -o "libpng-$LIBPNG_VERSION.tar.xz" \
+            "https://download.sourceforge.net/libpng/libpng-$LIBPNG_VERSION.tar.xz"
+
+          curl -L --fail --retry 5 \
+            -o "libjpeg-turbo-$LIBJPEG_VERSION.tar.gz" \
+            "https://downloads.sourceforge.net/libjpeg-turbo/libjpeg-turbo-$LIBJPEG_VERSION.tar.gz"
+
+          curl -L --fail --retry 5 \
+            -o "tiff-$LIBTIFF_VERSION.tar.xz" \
+            "https://download.osgeo.org/libtiff/tiff-$LIBTIFF_VERSION.tar.xz"
+
+          curl -L --fail --retry 5 \
+            -o "leptonica-$LEPTONICA_VERSION.tar.xz" \
+            "https://github.com/DanBloomberg/leptonica/releases/download/$LEPTONICA_VERSION/leptonica-$LEPTONICA_VERSION.tar.xz"
+
+          curl -L --fail --retry 5 \
+            -o "tesseract-$TESSERACT_VERSION.tar.gz" \
+            "https://github.com/tesseract-ocr/tesseract/archive/refs/tags/$TESSERACT_VERSION.tar.gz"
+
+          echo "=========================================================="
+          echo "DOWNLOADED FILES"
+          echo "=========================================================="
+
+          ls -lh
+
+      # ==========================================================
+      # COMMON CROSS COMPILE FLAGS
+      # ==========================================================
+
+      - name: Configure cross compile environment
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          cat > "$GITHUB_ENV" <<EOF
+          CC=$TARGET-gcc
+          CXX=$TARGET-g++
+          AR=$TARGET-ar
+          AS=$TARGET-as
+          LD=$TARGET-ld
+          RANLIB=$TARGET-ranlib
+          STRIP=$TARGET-strip
+          NM=$TARGET-nm
+          OBJCOPY=$TARGET-objcopy
+
+          PKG_CONFIG_PATH=$SYSROOT/lib/pkgconfig
+          PKG_CONFIG_LIBDIR=$SYSROOT/lib/pkgconfig
+          PKG_CONFIG_SYSROOT_DIR=$SYSROOT
+
+          CPPFLAGS=-I$SYSROOT/include
+          CFLAGS=-O2 -march=armv7-a -mfpu=neon -mfloat-abi=hard
+          CXXFLAGS=-O2 -march=armv7-a -mfpu=neon -mfloat-abi=hard
+          LDFLAGS=-L$SYSROOT/lib
+          EOF
+
+      # ==========================================================
+      # BUILD ZLIB
+      # ==========================================================
+
+      - name: BUILD ZLIB 1.3.2
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          echo "=========================================================="
+          echo "BUILD ZLIB $ZLIB_VERSION"
+          echo "=========================================================="
+
+          cd "$BUILD"
+
+          rm -rf "zlib-$ZLIB_VERSION"
+          tar -xf "zlib-$ZLIB_VERSION.tar.xz"
+
+          cd "zlib-$ZLIB_VERSION"
+
+          CC="$TARGET-gcc" \
+          AR="$TARGET-ar" \
+          RANLIB="$TARGET-ranlib" \
           ./configure \
-            --static \
-            --prefix="$SYSROOT"
+            --prefix=/usr \
+            --static
 
           make -j"$(nproc)"
-          make install
+
+          make DESTDIR="$SYSROOT" install
 
           test -f "$SYSROOT/include/zlib.h"
           test -f "$SYSROOT/lib/libz.a"
 
-          echo "ZLIB OK"
+          file "$SYSROOT/lib/libz.a"
 
-          #
-          # =========================================================
-          # LIBJPEG-TURBO 3.2.0
-          # =========================================================
-          #
+          echo "ZLIB BUILD OK"
 
-          cd "$WORK_DIR"
+      # ==========================================================
+      # BUILD LIBJPEG-TURBO
+      # ==========================================================
 
-          download_file \
-            "https://github.com/libjpeg-turbo/libjpeg-turbo/releases/download/${LIBJPEG_VERSION}/libjpeg-turbo-${LIBJPEG_VERSION}.tar.gz" \
-            "libjpeg-turbo-${LIBJPEG_VERSION}.tar.gz"
-
-          rm -rf "libjpeg-turbo-${LIBJPEG_VERSION}"
-          tar -xf "libjpeg-turbo-${LIBJPEG_VERSION}.tar.gz"
-
-          cd "libjpeg-turbo-${LIBJPEG_VERSION}"
-
-          rm -rf build
+      - name: BUILD LIBJPEG-TURBO 3.2.0
+        shell: bash
+        run: |
+          set -euxo pipefail
 
           echo "=========================================================="
-          echo "BUILD LIBJPEG-TURBO ${LIBJPEG_VERSION}"
+          echo "BUILD LIBJPEG-TURBO $LIBJPEG_VERSION"
           echo "=========================================================="
 
-          cmake -S . -B build -G Ninja \
+          cd "$BUILD"
+
+          rm -rf "libjpeg-turbo-$LIBJPEG_VERSION"
+          tar -xf "libjpeg-turbo-$LIBJPEG_VERSION.tar.gz"
+
+          cd "libjpeg-turbo-$LIBJPEG_VERSION"
+
+          mkdir -p build
+          cd build
+
+          cmake .. \
+            -G Ninja \
             -DCMAKE_SYSTEM_NAME=Linux \
-            -DCMAKE_SYSTEM_PROCESSOR=armv7l \
-            -DCMAKE_C_COMPILER="$CC" \
-            -DCMAKE_AR="$AR" \
-            -DCMAKE_RANLIB="$RANLIB" \
-            -DCMAKE_STRIP="$STRIP" \
-            -DCMAKE_INSTALL_PREFIX="$SYSROOT" \
+            -DCMAKE_C_COMPILER="$TARGET-gcc" \
+            -DCMAKE_CXX_COMPILER="$TARGET-g++" \
+            -DCMAKE_AR="$TARGET-ar" \
+            -DCMAKE_RANLIB="$TARGET-ranlib" \
+            -DCMAKE_STRIP="$TARGET-strip" \
+            -DCMAKE_INSTALL_PREFIX=/usr \
             -DCMAKE_INSTALL_LIBDIR=lib \
-            -DCMAKE_FIND_ROOT_PATH="$SYSROOT" \
-            -DCMAKE_FIND_ROOT_PATH_MODE_PROGRAM=NEVER \
-            -DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=ONLY \
-            -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=ONLY \
-            -DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=ONLY \
-            -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY \
-            -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
-            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_FLAGS="-O2 -march=armv7-a -mfpu=neon -mfloat-abi=hard" \
+            -DCMAKE_CXX_FLAGS="-O2 -march=armv7-a -mfpu=neon -mfloat-abi=hard" \
             -DENABLE_SHARED=OFF \
             -DENABLE_STATIC=ON \
             -DWITH_SIMD=ON \
@@ -229,718 +237,654 @@ jobs:
             -DWITH_TOOLS=OFF \
             -DWITH_TESTS=OFF
 
-          cmake --build build --parallel "$(nproc)"
-          cmake --install build
+          ninja -v
+
+          DESTDIR="$SYSROOT" ninja install
 
           test -f "$SYSROOT/lib/libjpeg.a"
 
-          echo "LIBJPEG-TURBO OK"
-
-          #
-          # =========================================================
-          # CHECK JPEG12
-          # =========================================================
-          #
-
-          echo "=========================================================="
+          echo "----------------------------------------------------------"
           echo "CHECK JPEG12 SYMBOLS"
-          echo "=========================================================="
+          echo "----------------------------------------------------------"
 
-          "$NM" "$SYSROOT/lib/libjpeg.a" |
-            grep -E \
-              'jpeg12_(read|write)_(scanlines|raw_data)' \
-            || {
-              echo "ERROR: Required JPEG12 symbols are missing."
-              exit 1
-            }
+          "$TARGET-nm" "$SYSROOT/lib/libjpeg.a" | grep "jpeg12_" || true
 
-          echo "JPEG12 OK"
+          echo "LIBJPEG-TURBO BUILD OK"
 
-          #
-          # =========================================================
-          # LIBPNG 1.6.58
-          # =========================================================
-          #
+      # ==========================================================
+      # BUILD LIBPNG
+      # ==========================================================
 
-          cd "$WORK_DIR"
-
-          download_file \
-            "https://download.sourceforge.net/libpng/libpng-${LIBPNG_VERSION}.tar.xz" \
-            "libpng-${LIBPNG_VERSION}.tar.xz"
-
-          rm -rf "libpng-${LIBPNG_VERSION}"
-          tar -xf "libpng-${LIBPNG_VERSION}.tar.xz"
-
-          cd "libpng-${LIBPNG_VERSION}"
+      - name: BUILD LIBPNG 1.6.58
+        shell: bash
+        run: |
+          set -euxo pipefail
 
           echo "=========================================================="
-          echo "BUILD LIBPNG ${LIBPNG_VERSION}"
+          echo "BUILD LIBPNG $LIBPNG_VERSION"
           echo "=========================================================="
 
-          #
-          # IMPORTANT:
-          # The target zlib include path belongs in CPPFLAGS.
-          #
+          cd "$BUILD"
+
+          rm -rf "libpng-$LIBPNG_VERSION"
+          tar -xf "libpng-$LIBPNG_VERSION.tar.xz"
+
+          cd "libpng-$LIBPNG_VERSION"
 
           export CPPFLAGS="-I$SYSROOT/include"
-          export CFLAGS="-fPIC -O2 -fno-semantic-interposition"
-          export LDFLAGS="-L$SYSROOT/lib -Wl,-rpath-link,$SYSROOT/lib"
+          export CFLAGS="-O2 -march=armv7-a -mfpu=neon -mfloat-abi=hard"
+          export LDFLAGS="-L$SYSROOT/lib"
 
           export ZLIB_CFLAGS="-I$SYSROOT/include"
           export ZLIB_LIBS="$SYSROOT/lib/libz.a"
 
-          rm -f \
-            pnglibconf.h \
-            pnglibconf.c \
-            config.h
+          export LIBS="$SYSROOT/lib/libz.a -lm"
 
-          rm -rf autom4te.cache
+          echo "----------------------------------------------------------"
+          echo "CHECK ZLIB"
+          echo "----------------------------------------------------------"
 
-          TARGET_ZLIB_VERNUM="$(
-            "$CC" \
-              $CPPFLAGS \
-              -E -dM \
-              -include zlib.h \
-              - </dev/null 2>/dev/null |
-              awk '/#define ZLIB_VERNUM / {
-                print $3;
-                exit
-              }'
-          )"
+          test -f "$SYSROOT/include/zlib.h"
+          test -f "$SYSROOT/lib/libz.a"
 
-          TARGET_ZLIB_VERSION="$(
-            "$CC" \
-              $CPPFLAGS \
-              -E -dM \
-              -include zlib.h \
-              - </dev/null 2>/dev/null |
-              awk '/#define ZLIB_VERSION / {
-                print $3;
-                exit
-              }'
-          )"
+          echo "zlib.h:"
+          grep -E '^#define ZLIB_VERSION' \
+            "$SYSROOT/include/zlib.h" || true
 
-          echo "Target zlib version: $TARGET_ZLIB_VERSION"
-          echo "Target zlib vernum:  $TARGET_ZLIB_VERNUM"
+          echo "libz.a:"
+          file "$SYSROOT/lib/libz.a"
 
-          if [ -z "$TARGET_ZLIB_VERNUM" ]; then
-            echo "ERROR: Target zlib.h was not detected."
-            exit 1
-          fi
+          echo "----------------------------------------------------------"
+          echo "CONFIGURE LIBPNG"
+          echo "----------------------------------------------------------"
 
           ./configure \
-            --host="$HOST" \
-            --build="$(./config.guess)" \
-            --prefix="$SYSROOT" \
-            --libdir="$SYSROOT/lib" \
-            --disable-shared \
-            --enable-static \
-            CC="$CC" \
-            AR="$AR" \
-            RANLIB="$RANLIB" \
-            CPPFLAGS="$CPPFLAGS" \
-            CFLAGS="$CFLAGS" \
-            LDFLAGS="$LDFLAGS" \
-            LIBS="$SYSROOT/lib/libz.a"
-
-          make -j"$(nproc)"
-          make install
-
-          test -f "$SYSROOT/lib/libpng16.a"
-
-          echo "LIBPNG OK"
-
-          #
-          # =========================================================
-          # LIBTIFF 4.7.2
-          # =========================================================
-          #
-
-          cd "$WORK_DIR"
-
-          download_file \
-            "https://download.osgeo.org/libtiff/tiff-${LIBTIFF_VERSION}.tar.xz" \
-            "tiff-${LIBTIFF_VERSION}.tar.xz"
-
-          rm -rf "tiff-${LIBTIFF_VERSION}"
-          tar -xf "tiff-${LIBTIFF_VERSION}.tar.xz"
-
-          cd "tiff-${LIBTIFF_VERSION}"
-
-          echo "=========================================================="
-          echo "BUILD LIBTIFF ${LIBTIFF_VERSION}"
-          echo "=========================================================="
-
-          export CPPFLAGS="-I$SYSROOT/include"
-          export CFLAGS="-fPIC -O2 -fno-semantic-interposition"
-          export LDFLAGS="-L$SYSROOT/lib -Wl,-rpath-link,$SYSROOT/lib"
-
-          ./configure \
-            --host="$HOST" \
-            --build="$(./config.guess)" \
-            --prefix="$SYSROOT" \
-            --libdir="$SYSROOT/lib" \
-            --disable-shared \
-            --enable-static \
+            --host="$TARGET" \
+            --build="$(gcc -dumpmachine)" \
+            --prefix=/usr \
+            --enable-shared=no \
+            --enable-static=yes \
             --disable-tools \
             --disable-tests \
-            --disable-docs \
-            --without-zstd \
-            --without-lzma \
-            --without-webp \
-            --without-jbig \
-            --without-jp2 \
-            --without-libdeflate \
-            --with-jpeg \
-            --with-zlib \
-            CC="$CC" \
-            AR="$AR" \
-            RANLIB="$RANLIB" \
             CPPFLAGS="$CPPFLAGS" \
             CFLAGS="$CFLAGS" \
             LDFLAGS="$LDFLAGS" \
-            LIBS="$SYSROOT/lib/libjpeg.a $SYSROOT/lib/libz.a"
+            ZLIB_CFLAGS="$ZLIB_CFLAGS" \
+            ZLIB_LIBS="$ZLIB_LIBS" \
+            LIBS="$LIBS"
 
-          make -j"$(nproc)"
-          make install
-
-          test -f "$SYSROOT/lib/libtiff.a"
-
-          echo "LIBTIFF OK"
-
-          #
-          # =========================================================
-          # LEPTONICA 1.87.0
-          # =========================================================
-          #
-
-          cd "$WORK_DIR"
-
-          download_file \
-            "https://github.com/DanBloomberg/leptonica/releases/download/${LEPTONICA_VERSION}/leptonica-${LEPTONICA_VERSION}.tar.gz" \
-            "leptonica-${LEPTONICA_VERSION}.tar.gz"
-
-          rm -rf "leptonica-${LEPTONICA_VERSION}"
-          tar -xf "leptonica-${LEPTONICA_VERSION}.tar.gz"
-
-          cd "leptonica-${LEPTONICA_VERSION}"
-
-          echo "=========================================================="
-          echo "BUILD LEPTONICA ${LEPTONICA_VERSION}"
-          echo "=========================================================="
-
-          export CPPFLAGS="-I$SYSROOT/include"
-          export CFLAGS="-fPIC -O2 -fno-semantic-interposition"
-
-          #
-          # The static image libraries are deliberately placed
-          # directly in LIBS.
-          #
-
-          export LDFLAGS="-L$SYSROOT/lib -Wl,-rpath-link,$SYSROOT/lib -Wl,-z,defs"
-
-          export LEPTONICA_LIBS="
-            -Wl,--start-group
-            $SYSROOT/lib/libtiff.a
-            $SYSROOT/lib/libjpeg.a
-            $SYSROOT/lib/libpng16.a
-            $SYSROOT/lib/libz.a
-            -Wl,--end-group
-            -lm
-          "
-
-          ./autogen.sh
-
-          ./configure \
-            --host="$HOST" \
-            --build="$(./config.guess)" \
-            --prefix="$SYSROOT" \
-            --libdir="$SYSROOT/lib" \
-            --enable-shared \
-            --disable-static \
-            --disable-programs \
-            --disable-dependency-tracking \
-            --with-jpeg \
-            --with-png \
-            --with-tiff \
-            --with-zlib \
-            CC="$CC" \
-            AR="$AR" \
-            RANLIB="$RANLIB" \
-            CPPFLAGS="$CPPFLAGS" \
-            CFLAGS="$CFLAGS" \
-            LDFLAGS="$LDFLAGS" \
-            LIBS="$LEPTONICA_LIBS"
-
-          echo "=========================================================="
-          echo "LEPTONICA CONFIGURATION"
-          echo "=========================================================="
+          echo "----------------------------------------------------------"
+          echo "CONFIG RESULT"
+          echo "----------------------------------------------------------"
 
           grep -E \
-            'jpeg|png|tiff|zlib' \
-            config.log |
-            tail -n 100 || true
+            '^(host|build|CC|CFLAGS|CPPFLAGS|LDFLAGS|LIBS|ZLIB)' \
+            config.status \
+            2>/dev/null || true
 
-          echo "=========================================================="
-          echo "BUILD LEPTONICA"
-          echo "=========================================================="
+          echo "----------------------------------------------------------"
+          echo "MAKE LIBPNG"
+          echo "----------------------------------------------------------"
 
           make -j"$(nproc)" V=1
 
-          make install
+          echo "----------------------------------------------------------"
+          echo "INSTALL LIBPNG"
+          echo "----------------------------------------------------------"
 
-          #
-          # Locate Leptonica.
-          #
+          make DESTDIR="$SYSROOT" install
 
-          LEPTONICA_LIB=""
+          echo "----------------------------------------------------------"
+          echo "VERIFY LIBPNG"
+          echo "----------------------------------------------------------"
 
-          for candidate in \
-            "$SYSROOT/lib/liblept.so" \
-            "$SYSROOT/lib/liblept.so.6" \
-            "$SYSROOT/lib/liblept.so.6.0.0"
-          do
-            if [ -f "$candidate" ]; then
-              LEPTONICA_LIB="$candidate"
-              break
-            fi
-          done
+          ls -lh "$SYSROOT/lib/"*png* || true
 
-          if [ -z "$LEPTONICA_LIB" ]; then
-            LEPTONICA_LIB="$(
-              find "$SYSROOT/lib" \
-                -maxdepth 1 \
-                -type f \
-                -name 'liblept.so*' |
-              head -n 1 || true
-            )"
+          test -f "$SYSROOT/lib/libpng16.a"
+
+          file "$SYSROOT/lib/libpng16.a"
+
+          echo "LIBPNG BUILD OK"
+
+      # ==========================================================
+      # BUILD LIBTIFF
+      # ==========================================================
+
+      - name: BUILD LIBTIFF 4.7.2
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          echo "=========================================================="
+          echo "BUILD LIBTIFF $LIBTIFF_VERSION"
+          echo "=========================================================="
+
+          cd "$BUILD"
+
+          rm -rf "tiff-$LIBTIFF_VERSION"
+          tar -xf "tiff-$LIBTIFF_VERSION.tar.xz"
+
+          cd "tiff-$LIBTIFF_VERSION"
+
+          autoreconf -fi
+
+          export CPPFLAGS="-I$SYSROOT/include"
+          export CFLAGS="-O2 -march=armv7-a -mfpu=neon -mfloat-abi=hard"
+          export LDFLAGS="-L$SYSROOT/lib"
+
+          export LIBS="$SYSROOT/lib/libjpeg.a $SYSROOT/lib/libz.a -lm"
+
+          ./configure \
+            --host="$TARGET" \
+            --build="$(gcc -dumpmachine)" \
+            --prefix=/usr \
+            --enable-static=yes \
+            --enable-shared=no \
+            --disable-tools \
+            --disable-tests \
+            --disable-cxx \
+            --with-jpeg-include-dir="$SYSROOT/include" \
+            --with-jpeg-lib-dir="$SYSROOT/lib" \
+            CPPFLAGS="$CPPFLAGS" \
+            CFLAGS="$CFLAGS" \
+            LDFLAGS="$LDFLAGS" \
+            LIBS="$LIBS"
+
+          make -j"$(nproc)" V=1
+
+          make DESTDIR="$SYSROOT" install
+
+          test -f "$SYSROOT/lib/libtiff.a"
+
+          file "$SYSROOT/lib/libtiff.a"
+
+          echo "LIBTIFF BUILD OK"
+
+      # ==========================================================
+      # BUILD LEPTONICA
+      # ==========================================================
+
+      - name: BUILD LEPTONICA 1.87.0
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          echo "=========================================================="
+          echo "BUILD LEPTONICA $LEPTONICA_VERSION"
+          echo "=========================================================="
+
+          cd "$BUILD"
+
+          rm -rf "leptonica-$LEPTONICA_VERSION"
+          tar -xf "leptonica-$LEPTONICA_VERSION.tar.xz"
+
+          cd "leptonica-$LEPTONICA_VERSION"
+
+          autoreconf -fi
+
+          export CPPFLAGS="-I$SYSROOT/include"
+          export CFLAGS="-O2 -march=armv7-a -mfpu=neon -mfloat-abi=hard"
+          export CXXFLAGS="$CFLAGS"
+          export LDFLAGS="-L$SYSROOT/lib"
+
+          export LIBS="\
+          -Wl,--start-group \
+          $SYSROOT/lib/libtiff.a \
+          $SYSROOT/lib/libjpeg.a \
+          $SYSROOT/lib/libpng16.a \
+          $SYSROOT/lib/libz.a \
+          -Wl,--end-group \
+          -lm"
+
+          ./configure \
+            --host="$TARGET" \
+            --build="$(gcc -dumpmachine)" \
+            --prefix=/usr \
+            --enable-shared=yes \
+            --enable-static=no \
+            --disable-programs \
+            --disable-doc \
+            --without-giflib \
+            --without-libwebp \
+            --without-libopenjp2 \
+            --without-libjp2 \
+            --without-libwebp \
+            --without-libheif \
+            --without-libarchive \
+            --without-libpng \
+            --without-libjpeg \
+            --without-libtiff \
+            CPPFLAGS="$CPPFLAGS" \
+            CFLAGS="$CFLAGS" \
+            CXXFLAGS="$CXXFLAGS" \
+            LDFLAGS="$LDFLAGS" \
+            LIBS="$LIBS"
+
+          echo "----------------------------------------------------------"
+          echo "PATCH LEPTONICA LINK"
+          echo "----------------------------------------------------------"
+
+          if [ -f src/Makefile ]; then
+            sed -i \
+              's|^liblept_la_LIBADD =.*|liblept_la_LIBADD = -Wl,--start-group '"$SYSROOT"'/lib/libtiff.a '"$SYSROOT"'/lib/libjpeg.a '"$SYSROOT"'/lib/libpng16.a '"$SYSROOT"'/lib/libz.a -Wl,--end-group -lm|' \
+              src/Makefile || true
           fi
 
-          if [ -z "$LEPTONICA_LIB" ]; then
-            echo "ERROR: Leptonica shared library not found."
-            find "$SYSROOT/lib" -maxdepth 1 -type f -print
+          echo "----------------------------------------------------------"
+          echo "MAKE LEPTONICA"
+          echo "----------------------------------------------------------"
+
+          make -j"$(nproc)" V=1
+
+          make DESTDIR="$SYSROOT" install
+
+          echo "----------------------------------------------------------"
+          echo "LOCATE LEPTONICA"
+          echo "----------------------------------------------------------"
+
+          find "$SYSROOT/lib" \
+            -maxdepth 1 \
+            -type f \
+            \( -name "liblept.so*" -o -name "libleptonica.so*" \) \
+            -print
+
+          LEPT_FILE="$(find "$SYSROOT/lib" \
+            -maxdepth 1 \
+            -type f \
+            \( -name "liblept.so*" -o -name "libleptonica.so*" \) \
+            | head -n 1)"
+
+          test -n "$LEPT_FILE"
+
+          cp -Lf "$LEPT_FILE" "$SYSROOT/lib/libleptonica.so"
+
+          echo "----------------------------------------------------------"
+          echo "CHECK LEPTONICA ARCHITECTURE"
+          echo "----------------------------------------------------------"
+
+          file "$SYSROOT/lib/libleptonica.so"
+
+          echo "----------------------------------------------------------"
+          echo "CHECK JPEG12"
+          echo "----------------------------------------------------------"
+
+          "$TARGET-nm" -D "$SYSROOT/lib/libleptonica.so" \
+            | grep "jpeg12_" || true
+
+          if "$TARGET-nm" -D "$SYSROOT/lib/libleptonica.so" \
+            | grep -q " U jpeg12_"; then
+            echo "ERROR: unresolved jpeg12 symbols remain in Leptonica."
             exit 1
           fi
 
-          cp -f \
-            "$LEPTONICA_LIB" \
-            "$SYSROOT/lib/libleptonica.so"
-
-          #
-          # =========================================================
-          # VERIFY LEPTONICA
-          # =========================================================
-          #
-
-          echo "=========================================================="
-          echo "LEPTONICA JPEG12 CHECK"
-          echo "=========================================================="
-
-          if "$NM" -D \
-            "$SYSROOT/lib/libleptonica.so" 2>/dev/null |
-            grep -E \
-              ' U jpeg12_(read|write)_(scanlines|raw_data)'; then
-
-            echo "ERROR: Unresolved JPEG12 symbols remain."
-            exit 1
-          fi
-
-          echo "JPEG12 unresolved symbols: NONE"
-
-          echo "=========================================================="
+          echo "----------------------------------------------------------"
           echo "LEPTONICA NEEDED"
-          echo "=========================================================="
+          echo "----------------------------------------------------------"
 
-          "$READELF" -d \
-            "$SYSROOT/lib/libleptonica.so" |
-            grep NEEDED || true
+          "$TARGET-readelf" -d "$SYSROOT/lib/libleptonica.so" \
+            | grep NEEDED || true
 
-          check_no_external_image_libs \
-            "$SYSROOT/lib/libleptonica.so"
+          if "$TARGET-readelf" -d "$SYSROOT/lib/libleptonica.so" \
+            | grep -E \
+              'libjpeg|libpng|libtiff|libz'; then
+            echo "ERROR: Leptonica still depends on external image libraries."
+            exit 1
+          fi
 
-          check_arm \
-            "$SYSROOT/lib/libleptonica.so"
+          echo "LEPTONICA BUILD OK"
 
-          echo "LEPTONICA OK"
+      # ==========================================================
+      # BUILD TESSERACT
+      # ==========================================================
 
-          #
-          # =========================================================
-          # LEPTONICA PKG-CONFIG
-          # =========================================================
-          #
-
-          cat > "$SYSROOT/lib/pkgconfig/lept.pc" <<EOF
-          prefix=$SYSROOT
-          exec_prefix=\${prefix}
-          libdir=$SYSROOT/lib
-          includedir=$SYSROOT/include
-
-          Name: lept
-          Description: Leptonica
-          Version: $LEPTONICA_VERSION
-          Libs: -L\${libdir} -lleptonica
-          Cflags: -I\${includedir}
-          EOF
-
-          #
-          # =========================================================
-          # TESSERACT 5.5.3
-          # =========================================================
-          #
-
-          cd "$WORK_DIR"
-
-          download_file \
-            "https://github.com/tesseract-ocr/tesseract/archive/refs/tags/${TESSERACT_VERSION}.tar.gz" \
-            "tesseract-${TESSERACT_VERSION}.tar.gz"
-
-          rm -rf "tesseract-${TESSERACT_VERSION}"
-          tar -xf "tesseract-${TESSERACT_VERSION}.tar.gz"
-
-          cd "tesseract-${TESSERACT_VERSION}"
+      - name: BUILD TESSERACT 5.5.3
+        shell: bash
+        run: |
+          set -euxo pipefail
 
           echo "=========================================================="
-          echo "PATCH TESSERACT"
+          echo "BUILD TESSERACT $TESSERACT_VERSION"
           echo "=========================================================="
 
-          #
-          # Compile ByArian signature.
-          #
+          cd "$BUILD"
+
+          rm -rf "tesseract-$TESSERACT_VERSION"
+          tar -xf "tesseract-$TESSERACT_VERSION.tar.gz"
+
+          cd "tesseract-$TESSERACT_VERSION"
+
+          ./autogen.sh
+
+          echo "----------------------------------------------------------"
+          echo "PATCH TESSERACT VERSION"
+          echo "----------------------------------------------------------"
 
           sed -i \
             's/return TESSERACT_VERSION_STR;/return "5.5.3 - Compile ByArian";/g' \
-            src/api/baseapi.cpp || true
+            src/api/baseapi.cpp
 
-          #
-          # Keep the original tessdata lookup and add the
-          # Enigma2 locations.
-          #
+          echo "----------------------------------------------------------"
+          echo "PATCH TESSDATA PATH"
+          echo "----------------------------------------------------------"
 
           sed -i \
-            's|"/usr/share/tessdata/"|"/usr/share/tessdata/;/media/hdd/tessdata/;/media/usb/tessdata/"|g' \
-            src/ccutil/mainblk.cpp || true
-
-          #
-          # =========================================================
-          # CONFIGURE TESSERACT
-          # =========================================================
-          #
+            's|"/usr/share/tessdata/"|"/usr/share/tessdata/;/media/hdd/tessdata/;/media/usb/tessdata/|g' \
+            src/ccutil/tessdatamanager.cpp 2>/dev/null || true
 
           export CPPFLAGS="-I$SYSROOT/include"
-          export CFLAGS="-fPIC -O2 -fno-semantic-interposition"
-          export CXXFLAGS="-fPIC -O2 -fno-semantic-interposition"
-          export LDFLAGS="-L$SYSROOT/lib -Wl,-rpath-link,$SYSROOT/lib"
+          export CFLAGS="-O2 -march=armv7-a -mfpu=neon -mfloat-abi=hard"
+          export CXXFLAGS="-O2 -march=armv7-a -mfpu=neon -mfloat-abi=hard"
+          export LDFLAGS="-L$SYSROOT/lib"
+
+          export LIBS="\
+          -Wl,--start-group \
+          $SYSROOT/lib/libleptonica.so \
+          $SYSROOT/lib/libtiff.a \
+          $SYSROOT/lib/libjpeg.a \
+          $SYSROOT/lib/libpng16.a \
+          $SYSROOT/lib/libz.a \
+          -Wl,--end-group \
+          -lm"
 
           export PKG_CONFIG_PATH="$SYSROOT/lib/pkgconfig"
           export PKG_CONFIG_LIBDIR="$SYSROOT/lib/pkgconfig"
           export PKG_CONFIG_SYSROOT_DIR="$SYSROOT"
 
-          ./autogen.sh
-
           ./configure \
-            --host="$HOST" \
-            --build="$(./config.guess)" \
-            --prefix="$SYSROOT" \
-            --libdir="$SYSROOT/lib" \
-            --disable-static \
-            --enable-shared \
-            --disable-debug \
-            --disable-icu \
-            --without-pango \
-            --without-cairo \
-            --without-libarchive \
-            --disable-opencl \
+            --host="$TARGET" \
+            --build="$(gcc -dumpmachine)" \
+            --prefix=/usr \
+            --enable-shared=yes \
+            --enable-static=no \
+            --disable-openmp \
             --disable-graphics \
-            CC="$CC" \
-            CXX="$CXX" \
-            AR="$AR" \
-            RANLIB="$RANLIB" \
+            --disable-archive \
+            --disable-legacy \
+            --without-curl \
+            --without-icu \
+            --without-pango \
+            --without-libarchive \
+            --without-gif \
+            --without-webp \
+            --without-openjpeg \
+            --without-libjpeg \
+            --without-libpng \
+            --without-libtiff \
             CPPFLAGS="$CPPFLAGS" \
             CFLAGS="$CFLAGS" \
             CXXFLAGS="$CXXFLAGS" \
-            LDFLAGS="$LDFLAGS"
+            LDFLAGS="$LDFLAGS" \
+            LIBS="$LIBS"
 
-          echo "=========================================================="
-          echo "BUILD TESSERACT"
-          echo "=========================================================="
+          echo "----------------------------------------------------------"
+          echo "MAKE TESSERACT"
+          echo "----------------------------------------------------------"
 
           make -j"$(nproc)" V=1
 
-          make install
+          make DESTDIR="$SYSROOT" install
 
-          #
-          # =========================================================
-          # LOCATE TESSERACT
-          # =========================================================
-          #
+          echo "TESSERACT BUILD OK"
 
-          TESSERACT_BIN=""
+      # ==========================================================
+      # PREPARE FINAL PACKAGE
+      # ==========================================================
 
-          for candidate in \
-            "$SYSROOT/bin/tesseract" \
-            "$SYSROOT/usr/bin/tesseract"
-          do
-            if [ -x "$candidate" ]; then
-              TESSERACT_BIN="$candidate"
-              break
-            fi
-          done
-
-          if [ -z "$TESSERACT_BIN" ]; then
-            TESSERACT_BIN="$(
-              find "$SYSROOT" \
-                -type f \
-                -name tesseract \
-                -perm -111 |
-              head -n 1 || true
-            )"
-          fi
-
-          if [ -z "$TESSERACT_BIN" ]; then
-            echo "ERROR: Tesseract binary not found."
-            exit 1
-          fi
-
-          #
-          # =========================================================
-          # LOCATE LIBTESSERACT
-          # =========================================================
-          #
-
-          TESSERACT_LIB=""
-
-          for candidate in \
-            "$SYSROOT/lib/libtesseract.so" \
-            "$SYSROOT/lib/libtesseract.so.5" \
-            "$SYSROOT/lib/libtesseract.so.5.5.3"
-          do
-            if [ -f "$candidate" ]; then
-              TESSERACT_LIB="$candidate"
-              break
-            fi
-          done
-
-          if [ -z "$TESSERACT_LIB" ]; then
-            TESSERACT_LIB="$(
-              find "$SYSROOT/lib" \
-                -maxdepth 1 \
-                -type f \
-                -name 'libtesseract.so*' |
-              head -n 1 || true
-            )"
-          fi
-
-          if [ -z "$TESSERACT_LIB" ]; then
-            echo "ERROR: libtesseract.so not found."
-            exit 1
-          fi
-
-          #
-          # =========================================================
-          # FINAL THREE FILES
-          # =========================================================
-          #
+      - name: CREATE FINAL PACKAGE
+        shell: bash
+        run: |
+          set -euxo pipefail
 
           echo "=========================================================="
-          echo "CREATE FINAL THREE-FILE BUNDLE"
+          echo "CREATE FINAL PACKAGE"
           echo "=========================================================="
 
-          rm -rf "$PACKAGE_DIR"
+          rm -rf "$BUILD/final"
+          mkdir -p "$BUILD/final/usr/bin"
+          mkdir -p "$BUILD/final/usr/lib"
 
-          mkdir -p \
-            "$PACKAGE_DIR/usr/bin" \
-            "$PACKAGE_DIR/usr/lib"
+          echo "----------------------------------------------------------"
+          echo "LOCATE TESSERACT"
+          echo "----------------------------------------------------------"
 
-          cp -L \
-            "$TESSERACT_BIN" \
-            "$PACKAGE_DIR/usr/bin/tesseract"
-
-          cp -L \
-            "$TESSERACT_LIB" \
-            "$PACKAGE_DIR/usr/lib/libtesseract.so"
-
-          cp -L \
-            "$SYSROOT/lib/libleptonica.so" \
-            "$PACKAGE_DIR/usr/lib/libleptonica.so"
-
-          #
-          # =========================================================
-          # STRIP
-          # =========================================================
-          #
-
-          "$STRIP" \
-            --strip-all \
-            "$PACKAGE_DIR/usr/bin/tesseract" || true
-
-          "$STRIP" \
-            --strip-unneeded \
-            "$PACKAGE_DIR/usr/lib/libtesseract.so" || true
-
-          "$STRIP" \
-            --strip-unneeded \
-            "$PACKAGE_DIR/usr/lib/libleptonica.so" || true
-
-          #
-          # =========================================================
-          # FINAL VERIFICATION
-          # =========================================================
-          #
-
-          echo "=========================================================="
-          echo "FINAL FILE LIST"
-          echo "=========================================================="
-
-          find "$PACKAGE_DIR" \
+          find "$SYSROOT/usr/bin" \
+            -maxdepth 1 \
             -type f \
-            -printf '%P\n' |
-            sort
+            -name "tesseract" \
+            -print
 
-          FILE_COUNT="$(
-            find "$PACKAGE_DIR" \
-              -type f |
-            wc -l
-          )"
+          test -f "$SYSROOT/usr/bin/tesseract"
 
-          if [ "$FILE_COUNT" -ne 3 ]; then
-            echo "ERROR: Expected exactly 3 files."
-            echo "Found: $FILE_COUNT"
+          cp -Lf \
+            "$SYSROOT/usr/bin/tesseract" \
+            "$BUILD/final/usr/bin/tesseract"
+
+          echo "----------------------------------------------------------"
+          echo "COPY LEPTONICA"
+          echo "----------------------------------------------------------"
+
+          test -f "$SYSROOT/lib/libleptonica.so"
+
+          cp -Lf \
+            "$SYSROOT/lib/libleptonica.so" \
+            "$BUILD/final/usr/lib/libleptonica.so"
+
+          echo "----------------------------------------------------------"
+          echo "LOCATE TESSERACT LIBRARY"
+          echo "----------------------------------------------------------"
+
+          TESS_LIB="$(find "$SYSROOT/lib" \
+            -maxdepth 1 \
+            -type f \
+            -name "libtesseract.so*" \
+            | head -n 1)"
+
+          test -n "$TESS_LIB"
+
+          cp -Lf \
+            "$TESS_LIB" \
+            "$BUILD/final/usr/lib/libtesseract.so"
+
+          echo "----------------------------------------------------------"
+          echo "FINAL FILES"
+          echo "----------------------------------------------------------"
+
+          find "$BUILD/final" \
+            -type f \
+            -print
+
+          echo "----------------------------------------------------------"
+          echo "FILE COUNT"
+          echo "----------------------------------------------------------"
+
+          COUNT="$(find "$BUILD/final" -type f | wc -l)"
+
+          echo "Files: $COUNT"
+
+          test "$COUNT" -eq 3
+
+      # ==========================================================
+      # FINAL ARCHITECTURE CHECK
+      # ==========================================================
+
+      - name: VERIFY ARM FILES
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          echo "=========================================================="
+          echo "VERIFY ARMv7 FILES"
+          echo "=========================================================="
+
+          file "$BUILD/final/usr/bin/tesseract"
+          file "$BUILD/final/usr/lib/libleptonica.so"
+          file "$BUILD/final/usr/lib/libtesseract.so"
+
+          echo "----------------------------------------------------------"
+          echo "TESSERACT ARCH"
+          echo "----------------------------------------------------------"
+
+          "$TARGET-readelf" -h \
+            "$BUILD/final/usr/bin/tesseract" \
+            | grep -E 'Class|Machine'
+
+          echo "----------------------------------------------------------"
+          echo "LEPTONICA ARCH"
+          echo "----------------------------------------------------------"
+
+          "$TARGET-readelf" -h \
+            "$BUILD/final/usr/lib/libleptonica.so" \
+            | grep -E 'Class|Machine'
+
+          echo "----------------------------------------------------------"
+          echo "TESSERACT LIB ARCH"
+          echo "----------------------------------------------------------"
+
+          "$TARGET-readelf" -h \
+            "$BUILD/final/usr/lib/libtesseract.so" \
+            | grep -E 'Class|Machine'
+
+      # ==========================================================
+      # CHECK LEPTONICA DEPENDENCIES
+      # ==========================================================
+
+      - name: VERIFY LEPTONICA DEPENDENCIES
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          echo "=========================================================="
+          echo "LEPTONICA DEPENDENCIES"
+          echo "=========================================================="
+
+          "$TARGET-readelf" -d \
+            "$BUILD/final/usr/lib/libleptonica.so" \
+            | grep NEEDED || true
+
+          echo "----------------------------------------------------------"
+          echo "CHECK IMAGE LIBRARIES"
+          echo "----------------------------------------------------------"
+
+          if "$TARGET-readelf" -d \
+            "$BUILD/final/usr/lib/libleptonica.so" \
+            | grep -E \
+              'libjpeg|libpng|libtiff|libz'; then
+
+            echo "ERROR:"
+            echo "Leptonica contains an external image-library dependency."
             exit 1
           fi
 
-          test -f \
-            "$PACKAGE_DIR/usr/bin/tesseract"
+          echo "OK"
 
-          test -f \
-            "$PACKAGE_DIR/usr/lib/libtesseract.so"
+      # ==========================================================
+      # CHECK JPEG12
+      # ==========================================================
 
-          test -f \
-            "$PACKAGE_DIR/usr/lib/libleptonica.so"
-
-          check_arm \
-            "$PACKAGE_DIR/usr/bin/tesseract"
-
-          check_arm \
-            "$PACKAGE_DIR/usr/lib/libtesseract.so"
-
-          check_arm \
-            "$PACKAGE_DIR/usr/lib/libleptonica.so"
-
-          #
-          # =========================================================
-          # FINAL JPEG12 CHECK
-          # =========================================================
-          #
+      - name: VERIFY JPEG12
+        shell: bash
+        run: |
+          set -euxo pipefail
 
           echo "=========================================================="
-          echo "FINAL JPEG12 CHECK"
+          echo "VERIFY JPEG12"
           echo "=========================================================="
 
-          if "$NM" -D \
-            "$PACKAGE_DIR/usr/lib/libleptonica.so" 2>/dev/null |
-            grep -E \
-              ' U jpeg12_(read|write)_(scanlines|raw_data)'; then
+          "$TARGET-nm" -D \
+            "$BUILD/final/usr/lib/libleptonica.so" \
+            | grep "jpeg12_" || true
 
-            echo "ERROR: Final Leptonica has unresolved JPEG12 symbols."
+          if "$TARGET-nm" -D \
+            "$BUILD/final/usr/lib/libleptonica.so" \
+            | grep -q " U jpeg12_"; then
+
+            echo "ERROR: unresolved jpeg12 symbols remain."
             exit 1
           fi
 
-          echo "OK: JPEG12 symbols are resolved."
+          echo "JPEG12 CHECK OK"
 
-          #
-          # =========================================================
-          # FINAL EXTERNAL DEPENDENCY CHECK
-          # =========================================================
-          #
+      # ==========================================================
+      # CHECK TESSERACT VERSION STRING
+      # ==========================================================
 
-          echo "=========================================================="
-          echo "FINAL LEPTONICA DEPENDENCIES"
-          echo "=========================================================="
-
-          "$READELF" -d \
-            "$PACKAGE_DIR/usr/lib/libleptonica.so" |
-            grep NEEDED || true
-
-          if "$READELF" -d \
-            "$PACKAGE_DIR/usr/lib/libleptonica.so" |
-            grep -E \
-              'Shared library: \[(libjpeg|libpng|libtiff|libz)'; then
-
-            echo "ERROR: Leptonica still requires an external image library."
-            exit 1
-          fi
-
-          #
-          # =========================================================
-          # TESSERACT DEPENDENCIES
-          # =========================================================
-          #
+      - name: VERIFY TESSERACT SIGNATURE
+        shell: bash
+        run: |
+          set -euxo pipefail
 
           echo "=========================================================="
-          echo "FINAL TESSERACT DEPENDENCIES"
+          echo "VERIFY TESSERACT SIGNATURE"
           echo "=========================================================="
 
-          "$READELF" -d \
-            "$PACKAGE_DIR/usr/lib/libtesseract.so" |
-            grep NEEDED || true
-
-          #
-          # =========================================================
-          # TESSERACT VERSION CHECK
-          # =========================================================
-          #
-
-          echo "=========================================================="
-          echo "TESSERACT VERSION CHECK"
-          echo "=========================================================="
-
-          "$READELF" -p .rodata \
-            "$PACKAGE_DIR/usr/bin/tesseract" 2>/dev/null |
-            grep -F \
-              "Compile ByArian" \
+          strings \
+            "$BUILD/final/usr/bin/tesseract" \
+            | grep -F "5.5.3 - Compile ByArian" \
             || true
 
-          #
-          # =========================================================
-          # PACKAGE SIZE
-          # =========================================================
-          #
+      # ==========================================================
+      # FINAL PACKAGE LIST
+      # ==========================================================
+
+      - name: SHOW FINAL PACKAGE
+        shell: bash
+        run: |
+          set -euxo pipefail
 
           echo "=========================================================="
-          echo "FINAL FILE SIZES"
+          echo "FINAL PACKAGE CONTENT"
           echo "=========================================================="
 
-          ls -lh \
-            "$PACKAGE_DIR/usr/bin/tesseract" \
-            "$PACKAGE_DIR/usr/lib/libtesseract.so" \
-            "$PACKAGE_DIR/usr/lib/libleptonica.so"
+          find "$BUILD/final" \
+            -type f \
+            -printf '%P\n' \
+            | sort
 
-          #
-          # =========================================================
-          # CREATE ARCHIVE
-          # =========================================================
-          #
+          echo
+          echo "Expected:"
+          echo "usr/bin/tesseract"
+          echo "usr/lib/libleptonica.so"
+          echo "usr/lib/libtesseract.so"
 
-          cd "$PACKAGE_DIR"
+      # ==========================================================
+      # CREATE TAR.GZ
+      # ==========================================================
+
+      - name: CREATE TAR.GZ
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          cd "$BUILD/final"
 
           tar -czf \
-            "$WORK_DIR/tesseract-${TESSERACT_VERSION}-armv7l-final.tar.gz" \
+            "$GITHUB_WORKSPACE/tesseract-5.5.3-armv7l-final.tar.gz" \
             usr
 
+          cd "$GITHUB_WORKSPACE"
+
           echo "=========================================================="
-          echo "BUILD COMPLETE"
+          echo "PACKAGE CREATED"
           echo "=========================================================="
 
           ls -lh \
-            "$WORK_DIR/tesseract-${TESSERACT_VERSION}-armv7l-final.tar.gz"
+            tesseract-5.5.3-armv7l-final.tar.gz
 
-      - name: Upload Final Three-File Bundle
+          echo "----------------------------------------------------------"
+          echo "PACKAGE CONTENT"
+          echo "----------------------------------------------------------"
+
+          tar -tzf \
+            tesseract-5.5.3-armv7l-final.tar.gz
+
+      # ==========================================================
+      # UPLOAD ARTIFACT
+      # ==========================================================
+
+      - name: Upload final package
         uses: actions/upload-artifact@v4
         with:
           name: tesseract-5.5.3-armv7l-final
-          path: |
-            package/usr/bin/tesseract
-            package/usr/lib/libtesseract.so
-            package/usr/lib/libleptonica.so
-            tesseract-5.5.3-armv7l-final.tar.gz
+          path: tesseract-5.5.3-armv7l-final.tar.gz
           if-no-files-found: error
+          retention-days: 30
