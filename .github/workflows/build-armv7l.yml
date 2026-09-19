@@ -15,7 +15,6 @@ jobs:
 
           #include <dlfcn.h>
           #include <errno.h>
-          #include <fcntl.h>
           #include <pthread.h>
           #include <stdint.h>
           #include <stdio.h>
@@ -26,7 +25,6 @@ jobs:
           #include <unistd.h>
 
           #define SOCKET_PATH "/tmp/dvbsubtitle_pes.sock"
-
           #define QUEUE_SIZE 8
           #define MAX_PES_SIZE (256 * 1024)
 
@@ -37,8 +35,7 @@ jobs:
               unsigned int length
           );
 
-          typedef struct
-          {
+          typedef struct {
               unsigned char *data;
               unsigned int length;
               unsigned int selector;
@@ -47,15 +44,15 @@ jobs:
           static inject_fn_t real_inject = NULL;
 
           static pthread_t sender_thread;
-          static pthread_mutex_t queue_mutex = PTHREAD_MUTEX_INITIALIZER;
-          static pthread_cond_t queue_cond = PTHREAD_COND_INITIALIZER;
+          static pthread_mutex_t queue_mutex =
+              PTHREAD_MUTEX_INITIALIZER;
+          static pthread_cond_t queue_cond =
+              PTHREAD_COND_INITIALIZER;
 
           static pes_packet_t queue[QUEUE_SIZE];
-
           static unsigned int queue_head = 0;
           static unsigned int queue_tail = 0;
           static unsigned int queue_count = 0;
-
           static int sender_started = 0;
 
           static void resolve_real_function(void)
@@ -83,7 +80,8 @@ jobs:
 
               while (length > 0)
               {
-                  ssize_t n = send(fd, p, length, MSG_NOSIGNAL);
+                  ssize_t n =
+                      send(fd, p, length, MSG_NOSIGNAL);
 
                   if (n < 0)
                   {
@@ -248,11 +246,6 @@ jobs:
 
               pthread_mutex_lock(&queue_mutex);
 
-              /*
-               * Drop the oldest packet when the queue is full.
-               * This keeps latency low instead of blocking
-               * the subtitle decoder.
-               */
               if (queue_count >= QUEUE_SIZE)
               {
                   free(queue[queue_head].data);
@@ -292,10 +285,6 @@ jobs:
 
               start_sender();
 
-              /*
-               * Copy the PES before passing execution back
-               * to the original vendor decoder.
-               */
               queue_pes(
                   data,
                   length,
@@ -330,30 +319,31 @@ jobs:
             libc6-dev-armhf-cross \
             binutils-arm-linux-gnueabihf
 
-      - name: Build ARMv7l shared library
+      - name: Build ARMv7 hard-float
         run: |
           arm-linux-gnueabihf-gcc \
             -shared \
             -fPIC \
             -O2 \
             -march=armv7-a \
+            -mfpu=neon-vfpv4 \
             -mfloat-abi=hard \
             -pthread \
             -ldl \
             -o subtitle_pes_tap.so \
             subtitle_pes_tap.c
 
+      - name: Verify
+        run: |
+          file subtitle_pes_tap.so
+          arm-linux-gnueabihf-readelf -h subtitle_pes_tap.so
+          arm-linux-gnueabihf-readelf -A subtitle_pes_tap.so
+
       - name: Strip
         run: |
           arm-linux-gnueabihf-strip \
             --strip-unneeded \
             subtitle_pes_tap.so
-
-      - name: Verify
-        run: |
-          file subtitle_pes_tap.so
-          arm-linux-gnueabihf-readelf -h subtitle_pes_tap.so
-          ls -lh subtitle_pes_tap.so
 
       - name: Upload
         uses: actions/upload-artifact@v4
