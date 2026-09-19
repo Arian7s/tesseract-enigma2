@@ -98,7 +98,7 @@ jobs:
             "https://zlib.net/current/zlib-$ZLIB_VERSION.tar.xz"
 
           curl -L --fail --retry 5 \
-            -o "libpng-$LIBPNG_VERSION.tar.xz" \
+            -o "libpng-$LIBPNG_VERSION.tar.gz" \
             "https://download.sourceforge.net/libpng/libpng-$LIBPNG_VERSION.tar.xz"
 
           curl -L --fail --retry 5 \
