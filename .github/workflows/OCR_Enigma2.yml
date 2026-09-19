@@ -11,7 +11,6 @@ jobs:
       TARGET: arm-linux-gnueabihf
       SYSROOT: ${{ github.workspace }}/sysroot
       BUILD: ${{ github.workspace }}/build
-      PREFIX: /usr
 
       ZLIB_VERSION: 1.3.2
       LIBPNG_VERSION: 1.6.58
@@ -158,12 +157,12 @@ jobs:
           AR="$TARGET-ar" \
           RANLIB="$TARGET-ranlib" \
           ./configure \
-            --prefix=/usr \
+            --prefix="$SYSROOT" \
             --static
 
           make -j"$(nproc)"
 
-          make DESTDIR="$SYSROOT" install
+          make install
 
           test -f "$SYSROOT/include/zlib.h"
           test -f "$SYSROOT/lib/libz.a"
@@ -199,7 +198,7 @@ jobs:
             -DCMAKE_AR="${TARGET}-ar" \
             -DCMAKE_RANLIB="${TARGET}-ranlib" \
             -DCMAKE_STRIP="${TARGET}-strip" \
-            -DCMAKE_INSTALL_PREFIX=/usr \
+            -DCMAKE_INSTALL_PREFIX="$SYSROOT" \
             -DCMAKE_INSTALL_LIBDIR=lib \
             -DCMAKE_C_FLAGS="-O2 -march=armv7-a -mfpu=neon -mfloat-abi=hard" \
             -DCMAKE_CXX_FLAGS="-O2 -march=armv7-a -mfpu=neon -mfloat-abi=hard" \
@@ -216,7 +215,7 @@ jobs:
 
           ninja -v
 
-          DESTDIR="$SYSROOT" ninja install
+          ninja install
 
           test -f "$SYSROOT/lib/libjpeg.a"
 
@@ -255,7 +254,7 @@ jobs:
           ./configure \
             --host="$TARGET" \
             --build="$(gcc -dumpmachine)" \
-            --prefix=/usr \
+            --prefix="$SYSROOT" \
             --enable-shared=no \
             --enable-static=yes \
             --disable-tools \
@@ -269,7 +268,7 @@ jobs:
 
           make -j"$(nproc)" V=1
 
-          make DESTDIR="$SYSROOT" install
+          make install
 
           test -f "$SYSROOT/lib/libpng16.a"
 
@@ -307,7 +306,7 @@ jobs:
           ./configure \
             --host="$TARGET" \
             --build="$(gcc -dumpmachine)" \
-            --prefix=/usr \
+            --prefix="$SYSROOT" \
             --enable-shared=no \
             --enable-static=yes \
             --disable-tools \
@@ -322,7 +321,7 @@ jobs:
 
           make -j"$(nproc)" V=1
 
-          make DESTDIR="$SYSROOT" install
+          make install
 
           test -f "$SYSROOT/lib/libtiff.a"
 
@@ -363,7 +362,7 @@ jobs:
           ./configure \
             --host="$TARGET" \
             --build="$(gcc -dumpmachine)" \
-            --prefix=/usr \
+            --prefix="$SYSROOT" \
             --enable-shared=yes \
             --enable-static=no \
             --disable-programs \
@@ -403,7 +402,7 @@ jobs:
 
           make -j"$(nproc)" V=1
 
-          make DESTDIR="$SYSROOT" install
+          make install
 
           echo
           echo "Searching Leptonica shared library..."
@@ -556,15 +555,15 @@ jobs:
 
           make DESTDIR="$SYSROOT" install
 
-          test -x "$SYSROOT/bin/tesseract"
+          test -x "$SYSROOT/usr/bin/tesseract"
 
           echo
           echo "Tesseract executable:"
-          ls -lh "$SYSROOT/bin/tesseract"
+          ls -lh "$SYSROOT/usr/bin/tesseract"
 
           echo
           echo "Tesseract libraries:"
-          find "$SYSROOT/lib" -maxdepth 1 \
+          find "$SYSROOT/usr/lib" -maxdepth 1 \
             -type f \
             -name 'libtesseract.so*' \
             -print
@@ -591,7 +590,7 @@ jobs:
           # --------------------------------------------------------
 
           cp -f \
-            "$SYSROOT/bin/tesseract" \
+            "$SYSROOT/usr/bin/tesseract" \
             "$FINAL/usr/bin/tesseract"
 
           # --------------------------------------------------------
@@ -606,7 +605,7 @@ jobs:
           # LIBTESSERACT
           # --------------------------------------------------------
 
-          TESS_LIB="$(find "$SYSROOT/lib" \
+          TESS_LIB="$(find "$SYSROOT/usr/lib" \
             -maxdepth 1 \
             -type f \
             -name 'libtesseract.so*' \
