@@ -79,6 +79,9 @@ jobs:
           echo "Downloading zlib..."
           curl -L --fail --retry 5 \
             -o "zlib-${ZLIB_VERSION}.tar.xz" \
+            "https://github.com/madler/zlib/releases/download/v${ZLIB_VERSION}/zlib-${ZLIB_VERSION}.tar.xz" || \
+          curl -L --fail --retry 5 \
+            -o "zlib-${ZLIB_VERSION}.tar.xz" \
             "https://zlib.net/zlib-${ZLIB_VERSION}.tar.xz"
 
           echo "Verifying zlib SHA256..."
@@ -86,6 +89,9 @@ jobs:
             | sha256sum -c -
 
           echo "Downloading libpng..."
+          curl -L --fail --retry 5 \
+            -o "libpng-${LIBPNG_VERSION}.tar.xz" \
+            "https://github.com/pnggroup/libpng/releases/download/v${LIBPNG_VERSION}/libpng-${LIBPNG_VERSION}.tar.xz" || \
           curl -L --fail --retry 5 \
             -o "libpng-${LIBPNG_VERSION}.tar.xz" \
             "https://download.sourceforge.net/libpng/libpng-${LIBPNG_VERSION}.tar.xz"
@@ -106,8 +112,8 @@ jobs:
 
           echo "Downloading Leptonica..."
           curl -L --fail --retry 5 \
-            -o "leptonica-${LEPTONICA_VERSION}.tar.xz" \
-            "https://github.com/DanBloomberg/leptonica/releases/download/${LEPTONICA_VERSION}/leptonica-${LEPTONICA_VERSION}.tar.xz"
+            -o "leptonica-${LEPTONICA_VERSION}.tar.gz" \
+            "https://github.com/DanBloomberg/leptonica/archive/refs/tags/${LEPTONICA_VERSION}.tar.gz"
 
           echo "Downloading Tesseract..."
           curl -L --fail --retry 5 \
@@ -335,7 +341,7 @@ jobs:
 
           rm -rf "leptonica-${LEPTONICA_VERSION}"
 
-          tar -xf "leptonica-${LEPTONICA_VERSION}.tar.xz"
+          tar -xf "leptonica-${LEPTONICA_VERSION}.tar.gz"
 
           cd "leptonica-${LEPTONICA_VERSION}"
 
