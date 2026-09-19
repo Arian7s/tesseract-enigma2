@@ -1,4 +1,4 @@
-name: Fast Cross-Compile Tesseract for Enigma2 (ARMv7l)
+name: Cross-Compile Tesseract for Enigma2 ARMv7l
 
 on:
   workflow_dispatch:
@@ -11,7 +11,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Build Tesseract ARMv7l
+      - name: Build ARMv7l package
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -39,59 +39,84 @@ jobs:
           export WORK_DIR="$GITHUB_WORKSPACE"
           export SYSROOT="$WORK_DIR/sysroot"
           export PACKAGE_DIR="$WORK_DIR/package"
+          export HOST="arm-linux-gnueabihf"
 
-          rm -rf "$SYSROOT" "$PACKAGE_DIR"
-          mkdir -p "$SYSROOT" "$PACKAGE_DIR"
+          export ZLIB_VERSION="1.3.2"
+          export LIBPNG_VERSION="1.6.58"
+          export LIBJPEG_VERSION="3.2.0"
+          export LIBTIFF_VERSION="4.7.2"
+          export LEPTONICA_VERSION="1.87.0"
+          export TESSERACT_VERSION="5.5.3"
 
-          export HOST=arm-linux-gnueabihf
           export CC="${HOST}-gcc"
           export CXX="${HOST}-g++"
           export AR="${HOST}-ar"
+          export AS="${HOST}-as"
+          export LD="${HOST}-ld"
           export RANLIB="${HOST}-ranlib"
           export STRIP="${HOST}-strip"
           export NM="${HOST}-nm"
           export OBJCOPY="${HOST}-objcopy"
+
+          rm -rf "$SYSROOT" "$PACKAGE_DIR"
+
+          mkdir -p \
+            "$SYSROOT" \
+            "$SYSROOT/lib" \
+            "$SYSROOT/include" \
+            "$PACKAGE_DIR"
 
           export CPPFLAGS="-I${SYSROOT}/include"
           export CFLAGS="-fPIC -O2 -I${SYSROOT}/include"
           export CXXFLAGS="-fPIC -O2 -I${SYSROOT}/include"
           export LDFLAGS="-L${SYSROOT}/lib"
 
-          export PKG_CONFIG_PATH="${SYSROOT}/lib/pkgconfig:${SYSROOT}/share/pkgconfig"
-          export PKG_CONFIG_LIBDIR="${SYSROOT}/lib/pkgconfig:${SYSROOT}/share/pkgconfig"
-          export PKG_CONFIG_SYSROOT_DIR="${SYSROOT}"
+          export PKG_CONFIG_SYSROOT_DIR="$SYSROOT"
+          export PKG_CONFIG_PATH="$SYSROOT/lib/pkgconfig:$SYSROOT/share/pkgconfig"
+          export PKG_CONFIG_LIBDIR="$SYSROOT/lib/pkgconfig:$SYSROOT/share/pkgconfig"
 
-          export PATH="${SYSROOT}/bin:${PATH}"
+          export PATH="$SYSROOT/bin:$PATH"
 
-          download_and_extract() {
+          download_file() {
             local url="$1"
-            local archive="$2"
-            local directory="$3"
+            local output="$2"
 
-            wget --no-verbose --show-progress --https-only \
+            wget \
+              --fail \
+              --show-progress \
+              --https-only \
               --retry-connrefused \
+              --waitretry=3 \
               --tries=5 \
-              -O "$archive" "$url"
+              -O "$output" \
+              "$url"
+          }
 
-            tar -xf "$archive"
+          verify_arm_library() {
+            local file_path="$1"
 
-            if [ ! -d "$directory" ]; then
-              echo "ERROR: Expected source directory not found: $directory"
+            if [ ! -e "$file_path" ]; then
+              echo "Missing library: $file_path"
+              exit 1
+            fi
+
+            file "$file_path"
+
+            if ! file "$file_path" | grep -Eqi 'ARM|current ar archive'; then
+              echo "The file is not an ARM library or archive: $file_path"
               exit 1
             fi
           }
 
-          # ------------------------------------------------------------------
-          # zlib 1.3.2
-          # ------------------------------------------------------------------
+          # Build zlib 1.3.2
           cd "$WORK_DIR"
 
-          download_and_extract \
-            "https://www.zlib.net/zlib-1.3.2.tar.xz" \
-            "zlib-1.3.2.tar.xz" \
-            "zlib-1.3.2"
+          download_file \
+            "https://zlib.net/zlib-${ZLIB_VERSION}.tar.gz" \
+            "zlib-${ZLIB_VERSION}.tar.gz"
 
-          cd zlib-1.3.2
+          tar -xzf "zlib-${ZLIB_VERSION}.tar.gz"
+          cd "zlib-${ZLIB_VERSION}"
 
           CC="$CC" \
           AR="$AR" \
@@ -106,15 +131,14 @@ jobs:
 
           cd "$WORK_DIR"
 
-          # ------------------------------------------------------------------
-          # libjpeg-turbo 3.0.2
-          # ------------------------------------------------------------------
-          download_and_extract \
-            "https://downloads.sourceforge.net/project/libjpeg-turbo/3.0.2/libjpeg-turbo-3.0.2.tar.gz" \
-            "libjpeg-turbo-3.0.2.tar.gz" \
-            "libjpeg-turbo-3.0.2"
+          # Build libjpeg-turbo 3.2.0
+          download_file \
+            "https://github.com/libjpeg-turbo/libjpeg-turbo/releases/download/${LIBJPEG_VERSION}/libjpeg-turbo-${LIBJPEG_VERSION}.tar.gz" \
+            "libjpeg-turbo-${LIBJPEG_VERSION}.tar.gz"
 
-          cd libjpeg-turbo-3.0.2
+          tar -xzf "libjpeg-turbo-${LIBJPEG_VERSION}.tar.gz"
+          cd "libjpeg-turbo-${LIBJPEG_VERSION}"
+
           mkdir build
           cd build
 
@@ -141,15 +165,13 @@ jobs:
 
           cd "$WORK_DIR"
 
-          # ------------------------------------------------------------------
-          # libpng 1.6.58
-          # ------------------------------------------------------------------
-          download_and_extract \
-            "https://download.sourceforge.net/libpng/libpng-1.6.58.tar.xz" \
-            "libpng-1.6.58.tar.xz" \
-            "libpng-1.6.58"
+          # Build libpng 1.6.58
+          download_file \
+            "https://download.sourceforge.net/libpng/libpng-${LIBPNG_VERSION}.tar.xz" \
+            "libpng-${LIBPNG_VERSION}.tar.xz"
 
-          cd libpng-1.6.58
+          tar -xf "libpng-${LIBPNG_VERSION}.tar.xz"
+          cd "libpng-${LIBPNG_VERSION}"
 
           CC="$CC" \
           AR="$AR" \
@@ -170,15 +192,13 @@ jobs:
 
           cd "$WORK_DIR"
 
-          # ------------------------------------------------------------------
-          # libtiff 4.6.0
-          # ------------------------------------------------------------------
-          download_and_extract \
-            "https://download.osgeo.org/libtiff/tiff-4.6.0.tar.gz" \
-            "tiff-4.6.0.tar.gz" \
-            "tiff-4.6.0"
+          # Build libtiff 4.7.2
+          download_file \
+            "https://download.osgeo.org/libtiff/tiff-${LIBTIFF_VERSION}.tar.gz" \
+            "tiff-${LIBTIFF_VERSION}.tar.gz"
 
-          cd tiff-4.6.0
+          tar -xzf "tiff-${LIBTIFF_VERSION}.tar.gz"
+          cd "tiff-${LIBTIFF_VERSION}"
 
           CC="$CC" \
           AR="$AR" \
@@ -201,22 +221,21 @@ jobs:
             --with-openjpeg=no \
             --with-libdeflate=no \
             CPPFLAGS="-I$SYSROOT/include" \
-            LDFLAGS="-L$SYSROOT/lib"
+            LDFLAGS="-L$SYSROOT/lib" \
+            LIBS="-ljpeg -lz"
 
           make -j"$(nproc)"
           make install
 
           cd "$WORK_DIR"
 
-          # ------------------------------------------------------------------
-          # Leptonica 1.84.1
-          # ------------------------------------------------------------------
-          download_and_extract \
-            "https://github.com/DanBloomberg/leptonica/releases/download/1.84.1/leptonica-1.84.1.tar.gz" \
-            "leptonica-1.84.1.tar.gz" \
-            "leptonica-1.84.1"
+          # Build Leptonica 1.87.0
+          download_file \
+            "https://github.com/DanBloomberg/leptonica/releases/download/${LEPTONICA_VERSION}/leptonica-${LEPTONICA_VERSION}.tar.gz" \
+            "leptonica-${LEPTONICA_VERSION}.tar.gz"
 
-          cd leptonica-1.84.1
+          tar -xzf "leptonica-${LEPTONICA_VERSION}.tar.gz"
+          cd "leptonica-${LEPTONICA_VERSION}"
 
           CC="$CC" \
           CXX="$CXX" \
@@ -238,7 +257,9 @@ jobs:
             --without-libopenjpeg \
             --without-libjp2 \
             CPPFLAGS="-I$SYSROOT/include -I$SYSROOT/include/leptonica" \
+            CFLAGS="-fPIC -O2 -I$SYSROOT/include -I$SYSROOT/include/leptonica" \
             LDFLAGS="-L$SYSROOT/lib" \
+            LIBS="-ljpeg -lpng16 -ltiff -lz" \
             JPEG_CFLAGS="-I$SYSROOT/include" \
             JPEG_LIBS="-L$SYSROOT/lib -ljpeg" \
             PNG_CFLAGS="-I$SYSROOT/include" \
@@ -250,23 +271,21 @@ jobs:
 
           make -j"$(nproc)" \
             CPPFLAGS="-I$SYSROOT/include -I$SYSROOT/include/leptonica" \
-            LDFLAGS="-L$SYSROOT/lib"
+            LDFLAGS="-L$SYSROOT/lib" \
+            LIBS="-ljpeg -lpng16 -ltiff -lz"
 
           make install
 
           cd "$WORK_DIR"
 
-          # ------------------------------------------------------------------
-          # Tesseract 5.5.3
-          # ------------------------------------------------------------------
-          download_and_extract \
-            "https://github.com/tesseract-ocr/tesseract/archive/refs/tags/5.5.3.tar.gz" \
-            "tesseract-5.5.3.tar.gz" \
-            "tesseract-5.5.3"
+          # Build Tesseract 5.5.3
+          download_file \
+            "https://github.com/tesseract-ocr/tesseract/archive/refs/tags/${TESSERACT_VERSION}.tar.gz" \
+            "tesseract-${TESSERACT_VERSION}.tar.gz"
 
-          cd tesseract-5.5.3
+          tar -xzf "tesseract-${TESSERACT_VERSION}.tar.gz"
+          cd "tesseract-${TESSERACT_VERSION}"
 
-          # تخصيص رقم الإصدار ومسارات tessdata الخاصة بـ Enigma2
           sed -i \
             's/return TESSERACT_VERSION_STR;/return "5.5.3 - Compile ByArian";/g' \
             src/api/baseapi.cpp || true
@@ -286,8 +305,8 @@ jobs:
             --build="$(gcc -dumpmachine)" \
             --prefix="$SYSROOT" \
             --libdir="$SYSROOT/lib" \
-            --disable-static \
             --enable-shared \
+            --disable-static \
             --disable-debug \
             --disable-icu \
             --without-pango \
@@ -295,98 +314,87 @@ jobs:
             --without-libarchive \
             --without-opencl \
             CPPFLAGS="-I$SYSROOT/include -I$SYSROOT/include/leptonica" \
+            CFLAGS="-fPIC -O2 -I$SYSROOT/include -I$SYSROOT/include/leptonica" \
             CXXFLAGS="-fPIC -O2 -I$SYSROOT/include -I$SYSROOT/include/leptonica" \
-            LDFLAGS="-L$SYSROOT/lib -Wl,-rpath,/usr/lib" \
+            LDFLAGS="-L$SYSROOT/lib" \
+            LIBS="-llept -ltesseract -ltiff -lpng16 -ljpeg -lz" \
             LEPTONICA_CFLAGS="-I$SYSROOT/include/leptonica" \
             LEPTONICA_LIBS="-L$SYSROOT/lib -llept"
 
-          make -j"$(nproc)"
+          make -j"$(nproc)" \
+            CPPFLAGS="-I$SYSROOT/include -I$SYSROOT/include/leptonica" \
+            LDFLAGS="-L$SYSROOT/lib" \
+            LIBS="-llept -ltiff -lpng16 -ljpeg -lz"
+
           make install
 
           cd "$WORK_DIR"
 
-          # ------------------------------------------------------------------
-          # تحقق من أن جميع المكتبات ARM وليست مكتبات النظام المضيف
-          # ------------------------------------------------------------------
-          echo "===== Installed libraries ====="
+          # Verify generated ARM libraries
+          echo "Installed sysroot libraries:"
           find "$SYSROOT/lib" -maxdepth 1 -type f -o -type l | sort
 
-          echo "===== Architecture check ====="
-          file "$SYSROOT/bin/tesseract" || true
-          file "$SYSROOT"/lib/*.so* || true
+          verify_arm_library "$SYSROOT/lib/libjpeg.so"
+          verify_arm_library "$SYSROOT/lib/libpng16.so"
+          verify_arm_library "$SYSROOT/lib/libtiff.so"
+          verify_arm_library "$SYSROOT/lib/libz.so"
+          verify_arm_library "$SYSROOT/lib/liblept.so"
+          verify_arm_library "$SYSROOT/lib/libtesseract.so"
 
-          # منع فشل لاحق بسبب اختيار مكتبات غير موجودة
-          test -f "$SYSROOT/bin/tesseract"
-          test -n "$(find "$SYSROOT/lib" -maxdepth 1 -name 'libtesseract.so*' -type f -print -quit)"
-          test -n "$(find "$SYSROOT/lib" -maxdepth 1 \( -name 'liblept.so*' -o -name 'libleptonica.so*' \) -type f -print -quit)"
+          file "$SYSROOT/bin/tesseract"
 
-          # ------------------------------------------------------------------
-          # إعداد الحزمة
-          # ------------------------------------------------------------------
+          if ! file "$SYSROOT/bin/tesseract" | grep -Eqi 'ARM'; then
+            echo "The Tesseract executable is not an ARM binary"
+            exit 1
+          fi
+
+          # Create package layout
           mkdir -p \
             "$PACKAGE_DIR/usr/bin" \
             "$PACKAGE_DIR/usr/lib" \
             "$PACKAGE_DIR/usr/share/tessdata"
 
-          cp -a "$SYSROOT/bin/tesseract" \
+          cp -a \
+            "$SYSROOT/bin/tesseract" \
             "$PACKAGE_DIR/usr/bin/"
 
-          # نسخ كل مكتبات المشروع المشتركة مع symlinks الخاصة بها.
-          # هذا يشمل jpeg/png/tiff/zlib/leptonica/tesseract.
-          find "$SYSROOT/lib" -maxdepth 1 \
-            \( -name 'libtesseract.so*' \
-            -o -name 'liblept.so*' \
-            -o -name 'libleptonica.so*' \
-            -o -name 'libjpeg.so*' \
-            -o -name 'libpng16.so*' \
-            -o -name 'libtiff.so*' \
-            -o -name 'libz.so*' \) \
-            -exec cp -a {} "$PACKAGE_DIR/usr/lib/" \;
+          for library in \
+            libz.so* \
+            libjpeg.so* \
+            libpng16.so* \
+            libtiff.so* \
+            liblept.so* \
+            libleptonica.so* \
+            libtesseract.so*; do
 
-          # بعض إصدارات Leptonica تستخدم اسم liblept بدلاً من libleptonica.
-          # نحافظ على الاسمين إن وجدا.
-          if [ -f "$SYSROOT/lib/liblept.so" ] && \
-             [ ! -e "$PACKAGE_DIR/usr/lib/libleptonica.so" ]; then
-            cp -a "$SYSROOT/lib/liblept.so"* "$PACKAGE_DIR/usr/lib/" || true
-          fi
+            for file_path in "$SYSROOT/lib"/$library; do
+              if [ -e "$file_path" ] || [ -L "$file_path" ]; then
+                cp -a "$file_path" "$PACKAGE_DIR/usr/lib/"
+              fi
+            done
+          done
 
-          # نسخ ملفات pkg-config اختيارياً للاستفادة منها في التطوير.
           if [ -d "$SYSROOT/lib/pkgconfig" ]; then
             mkdir -p "$PACKAGE_DIR/usr/lib/pkgconfig"
-            cp -a "$SYSROOT/lib/pkgconfig/"*.pc \
+            cp -a \
+              "$SYSROOT/lib/pkgconfig/"*.pc \
               "$PACKAGE_DIR/usr/lib/pkgconfig/" 2>/dev/null || true
           fi
 
-          # إنشاء lept.pc إذا لم ينشئه Leptonica.
-          if [ ! -f "$PACKAGE_DIR/usr/lib/pkgconfig/lept.pc" ]; then
-            cat > "$PACKAGE_DIR/usr/lib/pkgconfig/lept.pc" <<EOF
-          prefix=/usr
-          exec_prefix=\${prefix}
-          libdir=\${prefix}/lib
-          includedir=\${prefix}/include/leptonica
-
-          Name: leptonica
-          Description: An open source C library for efficient image processing
-          Version: 1.84.1
-          Libs: -L\${libdir} -llept
-          Cflags: -I\${includedir}
-          EOF
-          fi
-
-          # إزالة الرموز غير الضرورية فقط.
-          # لا نستخدم --strip-all على المكتبات المشتركة حتى لا تتضرر معلوماتها.
           "$STRIP" --strip-unneeded \
             "$PACKAGE_DIR/usr/bin/tesseract" || true
 
-          "$STRIP" --strip-unneeded \
-            "$PACKAGE_DIR/usr/lib/"*.so* || true
+          find "$PACKAGE_DIR/usr/lib" \
+            -type f \
+            -name '*.so*' \
+            -exec "$STRIP" --strip-unneeded {} \; || true
 
           chmod -R 755 "$PACKAGE_DIR"
 
-          echo "===== Final package contents ====="
-          find "$PACKAGE_DIR" -maxdepth 4 -print | sort
+          echo "Final package contents:"
+          find "$PACKAGE_DIR" -maxdepth 5 -print | sort
 
-      - name: Upload Artifact
+      - name: Upload ARMv7l artifact
         uses: actions/upload-artifact@v4
         with:
           name: tesseract-enigma2-armv7l
