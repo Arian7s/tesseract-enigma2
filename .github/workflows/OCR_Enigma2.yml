@@ -105,7 +105,7 @@ jobs:
 
           cfg() {
             local src="$1"; shift
-            cmake -S "$src" -B "$src/build" -G Ninja \
+            if ! cmake -S "$src" -B "$src/build" -G Ninja \
               -DCMAKE_TOOLCHAIN_FILE="$WORK/toolchain.cmake" \
               -DCMAKE_INSTALL_PREFIX="$PREFIX" \
               -DCMAKE_BUILD_TYPE=Release \
@@ -114,7 +114,16 @@ jobs:
               -DCMAKE_C_FLAGS="$ARM_FLAGS" \
               -DCMAKE_CXX_FLAGS="$ARM_FLAGS" \
               -DCMAKE_ASM_FLAGS="$ARM_FLAGS" \
-              "$@"
+              "$@"; then
+              echo "==== cmake configure FAILED for $src ===="
+              for f in CMakeError.log CMakeConfigureLog.yaml CMakeOutput.log; do
+                if [ -f "$src/build/CMakeFiles/$f" ]; then
+                  echo "---- $f ----"
+                  cat "$src/build/CMakeFiles/$f"
+                fi
+              done
+              exit 1
+            fi
             cmake --build "$src/build" --parallel "$(nproc)"
             cmake --install "$src/build"
           }
@@ -186,9 +195,12 @@ jobs:
             -DENABLE_WEBP=OFF \
             -DENABLE_OPENJPEG=OFF
 
-          echo "5.5.3 - Compile ByArian" > "$WORK/tesseract/VERSION"
-
           echo "==> tesseract 5.5.3 (shared + binary)"
+          # Keep VERSION as "5.5.3" — extra text there breaks
+          # write_basic_package_version_file() at the end of configure.
+          sed -i 's/#define TESSERACT_VERSION_STR .*/#define TESSERACT_VERSION_STR "5.5.3 - Compile ByArian"/' \
+            "$WORK/tesseract/include/tesseract/version.h.in"
+
           cfg "$WORK/tesseract" \
             -DBUILD_SHARED_LIBS=ON \
             -DBUILD_TRAINING_TOOLS=OFF \
@@ -198,6 +210,10 @@ jobs:
             -DDISABLE_CURL=ON \
             -DOPENMP_BUILD=OFF \
             -DENABLE_NATIVE=OFF \
+            -DENABLE_PRECOMPILED_HEADERS=OFF \
+            -DENABLE_CCACHE=OFF \
+            -DENABLE_NINJA_POOL=OFF \
+            -DENABLE_UNITY_BUILD=OFF \
             -DDISABLED_LEGACY_ENGINE=OFF \
             -DCMAKE_DISABLE_FIND_PACKAGE_LibArchive=TRUE \
             -DCMAKE_DISABLE_FIND_PACKAGE_CURL=TRUE \
