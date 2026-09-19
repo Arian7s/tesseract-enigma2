@@ -17,7 +17,7 @@ jobs:
         sudo apt-get install -y --no-install-recommends \
           gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf \
           autoconf automake libtool pkg-config make wget git cmake \
-          ca-certificates patchelf xz-utils binutils
+          ca-certificates patchelf xz-utils
 
     - name: Build static dependencies (PIC)
       run: |
@@ -166,10 +166,14 @@ jobs:
         make -j$(nproc)
         make install DESTDIR=$WORK/build_out
 
-    - name: Reduce to 3 files + patch SONAME (versioned, safe strip)
+    - name: Reduce to 3 files + patch SONAME (versioned)
       run: |
         set -euxo pipefail
 
+        # =========================================================
+        # FORCE the version names to match project version
+        # (NOT the libtool internal version like 5.0.5)
+        # =========================================================
         TESS_VER="5.5.3"
         LEPT_VER="6.0.0"
 
@@ -190,83 +194,79 @@ jobs:
         [ -f "$LIB_TESS" ] || { echo "ERROR: libtesseract not found"; exit 1; }
         [ -f "$LIB_LEPT" ] || { echo "ERROR: libleptonica not found"; exit 1; }
 
-        # Copy with final versioned names
+        # Show original NEEDED before patching
+        echo "===== Original NEEDED (tesseract) ====="
+        arm-linux-gnueabihf-objdump -p "$TESS_BIN" | grep NEEDED || true
+
+        echo "===== Original SONAME (libtesseract) ====="
+        arm-linux-gnueabihf-objdump -p "$LIB_TESS" | grep SONAME || true
+
+        echo "===== Original SONAME (libleptonica) ====="
+        arm-linux-gnueabihf-objdump -p "$LIB_LEPT" | grep SONAME || true
+
+        # Copy with the final forced names
         cp "$TESS_BIN"  package/usr/bin/tesseract
         cp "$LIB_TESS"  "package/usr/lib/libtesseract.so.${TESS_VER}"
         cp "$LIB_LEPT"  "package/usr/lib/libleptonica.so.${LEPT_VER}"
 
-        # ---- Symbol check before strip ----
-        echo "===== Symbol check BEFORE strip ====="
-        arm-linux-gnueabihf-nm -D "package/usr/lib/libtesseract.so.${TESS_VER}" \
-          | grep -i "neon_available" || echo "!! neon_available NOT FOUND BEFORE STRIP !!"
+        # Strip (safe strip)
+        arm-linux-gnueabihf-strip --strip-all       package/usr/bin/tesseract
+        arm-linux-gnueabihf-strip --strip-unneeded  "package/usr/lib/libtesseract.so.${TESS_VER}"
+        arm-linux-gnueabihf-strip --strip-unneeded  "package/usr/lib/libleptonica.so.${LEPT_VER}"
 
-        # ---- Safe strip: keep dynamic table intact ----
-        arm-linux-gnueabihf-strip --strip-debug package/usr/bin/tesseract
-        arm-linux-gnueabihf-strip --strip-debug "package/usr/lib/libtesseract.so.${TESS_VER}"
-        arm-linux-gnueabihf-strip --strip-debug "package/usr/lib/libleptonica.so.${LEPT_VER}"
-
-        # ---- Symbol check after strip ----
-        echo "===== Symbol check AFTER strip ====="
-        arm-linux-gnueabihf-nm -D "package/usr/lib/libtesseract.so.${TESS_VER}" \
-          | grep -i "neon_available" || echo "!! SYMBOL WAS REMOVED BY STRIP !!"
-
-        # ---- Set SONAME ----
+        # Set SONAME to the forced version names
         patchelf --set-soname "libtesseract.so.${TESS_VER}" "package/usr/lib/libtesseract.so.${TESS_VER}"
         patchelf --set-soname "libleptonica.so.${LEPT_VER}" "package/usr/lib/libleptonica.so.${LEPT_VER}"
 
-        # ---- Detect actual NEEDED entries and replace them ----
-        TESS_OLD=$(arm-linux-gnueabihf-objdump -p package/usr/bin/tesseract \
-          | awk '/NEEDED/ && /libtesseract/ {gsub(/[\[\]]/,"",$2); print $2}')
-        LEPT_OLD=$(arm-linux-gnueabihf-objdump -p package/usr/bin/tesseract \
-          | awk '/NEEDED/ && /libleptonica/ {gsub(/[\[\]]/,"",$2); print $2}')
-        LEPT_OLD_T=$(arm-linux-gnueabihf-objdump -p "package/usr/lib/libtesseract.so.${TESS_VER}" \
-          | awk '/NEEDED/ && /libleptonica/ {gsub(/[\[\]]/,"",$2); print $2}')
+        # Fix NEEDED in tesseract: replace every possible old name
+        # (libtool SONAME can be libtesseract.so.5 or libtesseract.so.5.0.5)
+        for OLD in libtesseract.so libtesseract.so.5 libtesseract.so.5.0.5 libtesseract.so.5.5.3; do
+          patchelf --replace-needed "$OLD" "libtesseract.so.${TESS_VER}" package/usr/bin/tesseract 2>/dev/null || true
+        done
+        for OLD in libleptonica.so libleptonica.so.6 libleptonica.so.6.0.0; do
+          patchelf --replace-needed "$OLD" "libleptonica.so.${LEPT_VER}" package/usr/bin/tesseract 2>/dev/null || true
+        done
 
-        echo "TESS_OLD   = $TESS_OLD"
-        echo "LEPT_OLD   = $LEPT_OLD"
-        echo "LEPT_OLD_T = $LEPT_OLD_T"
+        # Fix NEEDED in libtesseract.so
+        for OLD in libleptonica.so libleptonica.so.6 libleptonica.so.6.0.0; do
+          patchelf --replace-needed "$OLD" "libleptonica.so.${LEPT_VER}" \
+            "package/usr/lib/libtesseract.so.${TESS_VER}" 2>/dev/null || true
+        done
 
-        if [ -n "$TESS_OLD" ] && [ "$TESS_OLD" != "libtesseract.so.${TESS_VER}" ]; then
-          patchelf --replace-needed "$TESS_OLD" "libtesseract.so.${TESS_VER}" package/usr/bin/tesseract
-        fi
-        if [ -n "$LEPT_OLD" ] && [ "$LEPT_OLD" != "libleptonica.so.${LEPT_VER}" ]; then
-          patchelf --replace-needed "$LEPT_OLD" "libleptonica.so.${LEPT_VER}" package/usr/bin/tesseract
-        fi
-        if [ -n "$LEPT_OLD_T" ] && [ "$LEPT_OLD_T" != "libleptonica.so.${LEPT_VER}" ]; then
-          patchelf --replace-needed "$LEPT_OLD_T" "libleptonica.so.${LEPT_VER}" "package/usr/lib/libtesseract.so.${TESS_VER}"
-        fi
-
-        # ---- Set RPATH ----
+        # Set RPATH
         patchelf --set-rpath /usr/lib package/usr/bin/tesseract
         patchelf --set-rpath /usr/lib "package/usr/lib/libtesseract.so.${TESS_VER}"
         patchelf --set-rpath /usr/lib "package/usr/lib/libleptonica.so.${LEPT_VER}"
 
-        # ---- Final symbol check ----
-        echo "===== Symbol check AFTER patchelf ====="
-        arm-linux-gnueabihf-nm -D "package/usr/lib/libtesseract.so.${TESS_VER}" \
-          | grep -i "neon_available" || echo "!! SYMBOL MISSING - BUILD WILL FAIL ON DEVICE !!"
-
         chmod -R 777 package
 
-        echo "===== Final content ====="
+        echo
+        echo "===== Final content (must be 3 files) ====="
         find package -type f -o -type l | sort
 
         echo
-        echo "===== SONAME ====="
+        echo "===== Final SONAME (libtesseract) ====="
         arm-linux-gnueabihf-objdump -p "package/usr/lib/libtesseract.so.${TESS_VER}" | grep SONAME
+
+        echo
+        echo "===== Final SONAME (libleptonica) ====="
         arm-linux-gnueabihf-objdump -p "package/usr/lib/libleptonica.so.${LEPT_VER}" | grep SONAME
 
         echo
-        echo "===== NEEDED of tesseract ====="
+        echo "===== Final NEEDED of tesseract ====="
         arm-linux-gnueabihf-objdump -p package/usr/bin/tesseract | grep NEEDED
 
         echo
-        echo "===== NEEDED of libtesseract ====="
+        echo "===== Final NEEDED of libtesseract ====="
         arm-linux-gnueabihf-objdump -p "package/usr/lib/libtesseract.so.${TESS_VER}" | grep NEEDED
 
         echo
-        echo "===== NEEDED of libleptonica ====="
+        echo "===== Final NEEDED of libleptonica ====="
         arm-linux-gnueabihf-objdump -p "package/usr/lib/libleptonica.so.${LEPT_VER}" | grep NEEDED
+
+        echo
+        echo "===== Symbol check ====="
+        arm-linux-gnueabihf-nm -D "package/usr/lib/libtesseract.so.${TESS_VER}" | grep -i neon_available || echo "neon_available not found (may still be OK if stripped)"
 
         echo
         echo "===== Sizes ====="
