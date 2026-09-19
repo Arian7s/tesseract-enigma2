@@ -1,4 +1,4 @@
-name: Build Tesseract OCR for Enigma2 (ARMv7l - Final Bundle)
+name: Build Tesseract OCR for Enigma2 (ARMv7l - Static Deps)
 
 on:
   workflow_dispatch:
@@ -23,13 +23,42 @@ jobs:
             export DEBIAN_FRONTEND=noninteractive
             
             apt-get update && apt-get install -y \
-              autoconf automake libtool pkg-config g++ make wget file git \
-              libjpeg-dev libpng-dev libtiff-dev zlib1g-dev
+              autoconf automake libtool pkg-config g++ make wget file git cmake yasm nasm
+
+            export CFLAGS='-fPIC -Os'
+            export CXXFLAGS='-fPIC -Os'
+            export LDFLAGS='-L/usr/lib'
+            export PKG_CONFIG_PATH='/usr/lib/pkgconfig'
+
+            wget https://www.zlib.net/zlib-1.3.2.tar.gz
+            tar -xzf zlib-1.3.2.tar.gz
+            cd zlib-1.3.2 && ./configure --prefix=/usr --static && make -j\$(nproc) && make install && cd ..
+
+            wget https://github.com/libjpeg-turbo/libjpeg-turbo/releases/download/3.2.0/libjpeg-turbo-3.2.0.tar.gz
+            tar -xzf libjpeg-turbo-3.2.0.tar.gz
+            mkdir build-jpeg && cd build-jpeg
+            cmake -DCMAKE_INSTALL_PREFIX=/usr -DENABLE_SHARED=OFF -DENABLE_STATIC=ON -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DCMAKE_BUILD_TYPE=Release ..
+            make -j\$(nproc) && make install
+            cd ..
+
+            wget https://download.sourceforge.net/libpng/libpng-1.6.43.tar.gz || wget https://sourceforge.net/projects/libpng/files/libpng16/1.6.43/libpng-1.6.43.tar.gz
+            tar -xzf libpng-1.6.43.tar.gz
+            cd libpng-1.6.43
+            ./configure --prefix=/usr --disable-shared --enable-static --with-pic
+            make -j\$(nproc) && make install
+            cd ..
+
+            wget https://download.osgeo.org/libtiff/tiff-4.7.2.tar.gz
+            tar -xzf tiff-4.7.2.tar.gz
+            cd tiff-4.7.2
+            ./configure --prefix=/usr --disable-shared --enable-static --with-pic
+            make -j\$(nproc) && make install
+            cd ..
 
             wget --no-check-certificate https://github.com/DanBloomberg/leptonica/releases/download/1.87.0/leptonica-1.87.0.tar.gz
             tar -xzf leptonica-1.87.0.tar.gz
             cd leptonica-1.87.0
-            ./configure --prefix=/usr --enable-shared --disable-static
+            ./configure --prefix=/usr --enable-shared --disable-static --with-libjpeg --with-libpng --with-libtiff --with-zlib
             make -j\$(nproc) && make install
             cd ..
 
@@ -46,13 +75,10 @@ jobs:
             cd ..
 
             mkdir -p package/usr/bin package/usr/lib package/usr/share/tessdata
+
             cp /usr/bin/tesseract package/usr/bin/
-
-            LIB_TESS=\$(find /usr/lib /usr/local/lib -type f -name 'libtesseract.so.*' | head -n 1)
-            cp \"\$LIB_TESS\" package/usr/lib/libtesseract.so.5.5.3
-
-            LIB_LEPT=\$(find /usr/lib /usr/local/lib -type f -name 'libleptonica.so.*' | head -n 1)
-            cp \"\$LIB_LEPT\" package/usr/lib/libleptonica.so.6.0.0
+            cp /usr/lib/libtesseract.so.5.5.3 package/usr/lib/
+            cp /usr/lib/libleptonica.so.6.0.0 package/usr/lib/
 
             cd package/usr/lib/
             ln -sf libtesseract.so.5.5.3 libtesseract.so.5
@@ -60,13 +86,6 @@ jobs:
             ln -sf libleptonica.so.6.0.0 libleptonica.so.6
             ln -sf libleptonica.so.6.0.0 libleptonica.so
             cd /workspace
-
-            ldd package/usr/bin/tesseract package/usr/lib/libleptonica.so.6.0.0 | awk 'NF == 4 {print \$3}; NF == 2 {print \$1}' | grep '^/' | sort -u | while read -r lib; do
-              libname=\$(basename \"\$lib\")
-              if [[ ! \"\$libname\" =~ ^(libc\.|libm\.|libstdc\+\+\.|libgcc_s\.|ld-linux|libpthread|librt|libdl|libz\.) ]]; then
-                cp -L \"\$lib\" package/usr/lib/
-              fi
-            done
 
             strip --strip-all package/usr/bin/tesseract || true
             strip --strip-unneeded package/usr/lib/*.so* || true
@@ -76,5 +95,5 @@ jobs:
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: tesseract-enigma2-armv7l-final-bundle
+        name: tesseract-enigma2-armv7l-integrated
         path: package/
