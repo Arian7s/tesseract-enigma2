@@ -1,4 +1,4 @@
-name: Build Tesseract OCR for Enigma2 (ARMv7l - 3 Files Only)
+name: Build Tesseract OCR for Enigma2 (ARMv7l - Fully Self-Contained 3 Files)
 
 on:
   workflow_dispatch:
@@ -19,7 +19,7 @@ jobs:
           autoconf automake libtool pkg-config make wget git cmake \
           ca-certificates patchelf
 
-    - name: Cross-compile dependencies
+    - name: Build static dependencies (PIC)
       run: |
         set -euxo pipefail
 
@@ -37,20 +37,21 @@ jobs:
         export CFLAGS="-O2 -fPIC -I$PREFIX/include"
         export CXXFLAGS="-O2 -fPIC -I$PREFIX/include"
         export CPPFLAGS="-I$PREFIX/include"
-        export LDFLAGS="-L$PREFIX/lib -Wl,-rpath-link,$PREFIX/lib"
+        export LDFLAGS="-L$PREFIX/lib"
         export PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig"
         export PKG_CONFIG_LIBDIR="$PREFIX/lib/pkgconfig"
 
         fetch() { wget -q --no-check-certificate -O "$2" "$1"; }
 
-        # ---------- zlib ----------
+        # ---------- zlib (static only) ----------
         fetch https://zlib.net/fossils/zlib-1.3.1.tar.gz zlib.tar.gz
         tar xf zlib.tar.gz
         ( cd zlib-1.3.1
-          CHOST=$CROSS ./configure --prefix="$PREFIX"
-          make -j$(nproc) && make install )
+          CFLAGS="-O2 -fPIC" CHOST=$CROSS ./configure --prefix="$PREFIX" --static
+          make -j$(nproc) && make install
+          rm -f "$PREFIX"/lib/libz.so* )
 
-        # ---------- libjpeg-turbo ----------
+        # ---------- libjpeg-turbo (static only) ----------
         fetch https://github.com/libjpeg-turbo/libjpeg-turbo/releases/download/3.0.4/libjpeg-turbo-3.0.4.tar.gz ljt.tar.gz
         tar xf ljt.tar.gz
         ( cd libjpeg-turbo-3.0.4 && mkdir build && cd build
@@ -61,39 +62,77 @@ jobs:
             -DCMAKE_C_FLAGS="-O2 -fPIC" \
             -DCMAKE_INSTALL_PREFIX="$PREFIX" \
             -DCMAKE_INSTALL_LIBDIR=lib \
-            -DENABLE_SHARED=ON -DENABLE_STATIC=OFF \
+            -DENABLE_SHARED=OFF -DENABLE_STATIC=ON \
+            -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
             -DWITH_JPEG8=ON -DWITH_SIMD=OFF \
             ..
-          make -j$(nproc) && make install )
+          make -j$(nproc) && make install
+          rm -f "$PREFIX"/lib/libjpeg.so* "$PREFIX"/lib/libturbojpeg.so* )
 
-        # ---------- libpng ----------
+        # ---------- libpng (static only) ----------
         fetch https://download.sourceforge.net/libpng/libpng-1.6.43.tar.gz libpng.tar.gz
         tar xf libpng.tar.gz
         ( cd libpng-1.6.43
-          ./configure --host=$CROSS --prefix="$PREFIX" \
-            --enable-shared --disable-static
-          make -j$(nproc) && make install )
+          CFLAGS="-O2 -fPIC" ./configure --host=$CROSS --prefix="$PREFIX" \
+            --disable-shared --enable-static
+          make -j$(nproc) && make install
+          rm -f "$PREFIX"/lib/libpng*.so* )
 
-        # ---------- libtiff ----------
+        # ---------- libtiff (static only) ----------
         fetch https://download.osgeo.org/libtiff/tiff-4.6.0.tar.gz tiff.tar.gz
         tar xf tiff.tar.gz
         ( cd tiff-4.6.0
-          ./configure --host=$CROSS --prefix="$PREFIX" \
-            --enable-shared --disable-static \
+          CFLAGS="-O2 -fPIC" ./configure --host=$CROSS --prefix="$PREFIX" \
+            --disable-shared --enable-static \
             --disable-lzma --disable-zstd --disable-webp --disable-jbig --disable-jpeg
-          make -j$(nproc) && make install )
+          make -j$(nproc) && make install
+          rm -f "$PREFIX"/lib/libtiff*.so* )
 
-        # ---------- leptonica ----------
+        echo "===== sysroot/lib content (should be only .a files + .la) ====="
+        ls -la "$PREFIX/lib"
+
+    - name: Build libleptonica.so (linked against static deps)
+      run: |
+        set -euxo pipefail
+
+        export CROSS=arm-linux-gnueabihf
+        export CC=${CROSS}-gcc
+        export CXX=${CROSS}-g++
+        export STRIP=${CROSS}-strip
+
+        export WORK=$PWD
+        export PREFIX=$WORK/sysroot
+
+        export CFLAGS="-O2 -fPIC -I$PREFIX/include"
+        export CXXFLAGS="-O2 -fPIC -I$PREFIX/include"
+        export CPPFLAGS="-I$PREFIX/include"
+        # مهم: ندفع الـ linker لاستخدام .a فقط
+        export LDFLAGS="-L$PREFIX/lib -Wl,-Bstatic -ljpeg -lpng -ltiff -lz -Wl,-Bdynamic"
+        export PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig"
+        export PKG_CONFIG_LIBDIR="$PREFIX/lib/pkgconfig"
+        export LIBS="-Wl,-Bstatic -ljpeg -lpng -ltiff -lz -Wl,-Bdynamic -lm"
+
+        fetch() { wget -q --no-check-certificate -O "$2" "$1"; }
         fetch https://github.com/DanBloomberg/leptonica/releases/download/1.87.0/leptonica-1.87.0.tar.gz lep.tar.gz
         tar xf lep.tar.gz
-        ( cd leptonica-1.87.0
-          ./configure --host=$CROSS --prefix="$PREFIX" \
-            --enable-shared --disable-static \
-            --without-libwebp --without-libopenjpeg \
-            --without-giflib --without-libarchive
-          make -j$(nproc) && make install )
+        cd leptonica-1.87.0
 
-    - name: Cross-compile Tesseract
+        ./configure --host=$CROSS --prefix="$PREFIX" \
+          --enable-shared --disable-static \
+          --without-libwebp --without-libopenjpeg \
+          --without-giflib --without-libarchive
+
+        make -j$(nproc)
+
+        # التحقق قبل التثبيت: libleptonica.so يجب ألا يحتاج مكتبات الصور
+        LEPT_BUILT=$(find src/.libs -name 'libleptonica.so.*' -type f | head -n 1)
+        echo "LEPT_BUILT = $LEPT_BUILT"
+        echo "===== NEEDED of libleptonica.so (before install) ====="
+        arm-linux-gnueabihf-objdump -p "$LEPT_BUILT" | grep NEEDED || true
+
+        make install
+
+    - name: Build Tesseract (shared lib + binary)
       run: |
         set -euxo pipefail
 
@@ -123,7 +162,7 @@ jobs:
 
         ./autogen.sh
         ./configure --host=$CROSS --prefix=/usr \
-          --disable-static --disable-debug \
+          --enable-shared --disable-static --disable-debug \
           --disable-icu --without-pango --without-cairo --without-libarchive
 
         make -j$(nproc)
@@ -135,56 +174,64 @@ jobs:
 
         mkdir -p package/usr/bin package/usr/lib
 
-        # 1) نسخ الملفات الثلاثة فقط
-        cp build_out/usr/bin/tesseract              package/usr/bin/tesseract
-        cp sysroot/lib/libtesseract.so.5.5.3        package/usr/lib/libtesseract.so
-        cp sysroot/lib/libleptonica.so.6.0.0        package/usr/lib/libleptonica.so
+        TESS_BIN=$(find build_out/usr/bin -name 'tesseract' -type f | head -n 1)
+        LIB_TESS=$(find build_out/usr/lib -name 'libtesseract.so.*' -type f | head -n 1)
+        LIB_LEPT=$(find sysroot/lib -name 'libleptonica.so.*' -type f | head -n 1)
 
-        # 2) تجريد الرموز
-        arm-linux-gnueabihf-strip --strip-all     package/usr/bin/tesseract
-        arm-linux-gnueabihf-strip --strip-unneeded package/usr/lib/libtesseract.so
-        arm-linux-gnueabihf-strip --strip-unneeded package/usr/lib/libleptonica.so
+        echo "TESS_BIN = $TESS_BIN"
+        echo "LIB_TESS = $LIB_TESS"
+        echo "LIB_LEPT = $LIB_LEPT"
 
-        # 3) توحيد SONAME للمكتبات (إزالة أرقام الإصدارات)
+        [ -f "$TESS_BIN" ] || { echo "ERROR: tesseract not found"; exit 1; }
+        [ -f "$LIB_TESS" ] || { echo "ERROR: libtesseract not found"; exit 1; }
+        [ -f "$LIB_LEPT" ] || { echo "ERROR: libleptonica not found"; exit 1; }
+
+        cp "$TESS_BIN"  package/usr/bin/tesseract
+        cp "$LIB_TESS"  package/usr/lib/libtesseract.so
+        cp "$LIB_LEPT"  package/usr/lib/libleptonica.so
+
+        # Strip
+        arm-linux-gnueabihf-strip --strip-all       package/usr/bin/tesseract
+        arm-linux-gnueabihf-strip --strip-unneeded  package/usr/lib/libtesseract.so
+        arm-linux-gnueabihf-strip --strip-unneeded  package/usr/lib/libleptonica.so
+
+        # SONAME
         patchelf --set-soname libtesseract.so package/usr/lib/libtesseract.so
         patchelf --set-soname libleptonica.so package/usr/lib/libleptonica.so
 
-        # 4) توحيد NEEDED في الملفات الثلاثة
-        #    tesseract: كان يطلب libtesseract.so.5 و libleptonica.so.6
-        patchelf --replace-needed libtesseract.so.5 libtesseract.so package/usr/bin/tesseract
-        patchelf --replace-needed libleptonica.so.6 libleptonica.so package/usr/bin/tesseract
-        #    libtesseract: كان يطلب libleptonica.so.6
-        patchelf --replace-needed libleptonica.so.6 libleptonica.so package/usr/lib/libtesseract.so
+        # NEEDED
+        patchelf --replace-needed libtesseract.so.5 libtesseract.so package/usr/bin/tesseract || true
+        patchelf --replace-needed libleptonica.so.6 libleptonica.so package/usr/bin/tesseract || true
+        patchelf --replace-needed libleptonica.so.6 libleptonica.so package/usr/lib/libtesseract.so || true
 
-        # 5) توحيد RPATH
+        # RPATH
         patchelf --set-rpath /usr/lib package/usr/bin/tesseract
         patchelf --set-rpath /usr/lib package/usr/lib/libtesseract.so
         patchelf --set-rpath /usr/lib package/usr/lib/libleptonica.so
 
         chmod -R 777 package
 
-        echo "===== Final content (must be exactly 3 files) ====="
+        echo "===== Final content ====="
         find package -type f -o -type l | sort
 
         echo
-        echo "===== SONAME check ====="
-        arm-linux-gnueabihf-objdump -p package/usr/lib/libtesseract.so | grep SONAME
-        arm-linux-gnueabihf-objdump -p package/usr/lib/libleptonica.so | grep SONAME
-
-        echo
-        echo "===== NEEDED of tesseract ====="
-        arm-linux-gnueabihf-objdump -p package/usr/bin/tesseract | grep NEEDED
+        echo "===== NEEDED of libleptonica.so ====="
+        arm-linux-gnueabihf-objdump -p package/usr/lib/libleptonica.so | grep NEEDED
 
         echo
         echo "===== NEEDED of libtesseract.so ====="
         arm-linux-gnueabihf-objdump -p package/usr/lib/libtesseract.so | grep NEEDED
 
         echo
-        echo "===== RPATH check ====="
-        arm-linux-gnueabihf-objdump -x package/usr/bin/tesseract | grep -E 'RPATH|RUNPATH' || true
+        echo "===== NEEDED of tesseract ====="
+        arm-linux-gnueabihf-objdump -p package/usr/bin/tesseract | grep NEEDED
+
+        echo
+        echo "===== Sizes ====="
+        ls -lh package/usr/bin/tesseract package/usr/lib/*.so
 
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: tesseract-enigma2-armv7l-3files
+        name: tesseract-enigma2-armv7l-selfcontained
         path: package/
