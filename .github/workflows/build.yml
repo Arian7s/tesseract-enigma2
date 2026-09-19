@@ -1,4 +1,4 @@
-name: Build Tesseract OCR for Enigma2 (ARMv7l - Final Fix)
+name: Build Tesseract OCR for Enigma2 (ARMv7l - Final Bundle)
 
 on:
   workflow_dispatch:
@@ -61,6 +61,13 @@ jobs:
             ln -sf libleptonica.so.6.0.0 libleptonica.so
             cd /workspace
 
+            ldd package/usr/bin/tesseract package/usr/lib/libleptonica.so.6.0.0 | awk 'NF == 4 {print \$3}; NF == 2 {print \$1}' | grep '^/' | sort -u | while read -r lib; do
+              libname=\$(basename \"\$lib\")
+              if [[ ! \"\$libname\" =~ ^(libc\.|libm\.|libstdc\+\+\.|libgcc_s\.|ld-linux|libpthread|librt|libdl|libz\.) ]]; then
+                cp -L \"\$lib\" package/usr/lib/
+              fi
+            done
+
             strip --strip-all package/usr/bin/tesseract || true
             strip --strip-unneeded package/usr/lib/*.so* || true
             chmod -R 777 package
@@ -69,5 +76,5 @@ jobs:
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: tesseract-enigma2-armv7l-final-fix
+        name: tesseract-enigma2-armv7l-final-bundle
         path: package/
