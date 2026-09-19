@@ -61,6 +61,8 @@ jobs:
             ./configure --prefix=/usr --enable-shared --disable-static --with-libjpeg --with-libpng --with-libtiff --with-zlib
             make -j\$(nproc) && make install && cd ..
 
+            mkdir -p /usr/lib/arm-linux-gnueabihf/pkgconfig
+            cp /usr/lib/pkgconfig/lept.pc /usr/lib/arm-linux-gnueabihf/pkgconfig/ || true
             ldconfig
 
             wget --no-check-certificate https://github.com/tesseract-ocr/tesseract/archive/refs/tags/5.5.3.tar.gz
@@ -71,7 +73,7 @@ jobs:
             sed -i 's|\"/usr/share/tessdata/\"|\"/usr/share/tessdata/;/media/hdd/tessdata/;/media/usb/tessdata/\"|g' src/ccutil/mainblk.cpp || true
 
             ./autogen.sh
-            ./configure --prefix=/usr --disable-static --disable-debug --disable-icu --without-pango --without-cairo --without-libarchive LIBLEPT_CFLAGS=\"-I/usr/include/leptonica\" LIBLEPT_LIBS=\"-L/usr/lib -llept\"
+            ./configure --prefix=/usr --disable-static --disable-debug --disable-icu --without-pango --without-cairo --without-libarchive lept_CFLAGS=\"-I/usr/include/leptonica\" lept_LIBS=\"-L/usr/lib -llept\"
             make -j\$(nproc) && make install && cd ..
 
             mkdir -p package/usr/bin package/usr/lib package/usr/share/tessdata
