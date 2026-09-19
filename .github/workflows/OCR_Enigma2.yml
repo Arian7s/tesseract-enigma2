@@ -93,7 +93,11 @@ jobs:
           echo "Downloading libjpeg-turbo..."
           curl -L --fail --retry 5 \
             -o "libjpeg-turbo-${LIBJPEG_VERSION}.tar.gz" \
-            "https://downloads.sourceforge.net/libjpeg-turbo/libjpeg-turbo-${LIBJPEG_VERSION}.tar.gz"
+            "https://github.com/libjpeg-turbo/libjpeg-turbo/releases/download/${LIBJPEG_VERSION}/libjpeg-turbo-${LIBJPEG_VERSION}.tar.gz"
+
+          echo "Verifying libjpeg-turbo SHA256..."
+          echo "6f30092cef9fb839779646608f4ee14ae3cbac989c47fa05e841b0841f09878e  libjpeg-turbo-${LIBJPEG_VERSION}.tar.gz" \
+            | sha256sum -c -
 
           echo "Downloading libtiff..."
           curl -L --fail --retry 5 \
@@ -115,18 +119,19 @@ jobs:
           ls -lh
 
       # ============================================================
-      # CROSS COMPILER ENVIRONMENT
+      # CROSS COMPILER CHECK
       # ============================================================
 
-      - name: Configure cross compile environment
+      - name: Check cross compiler
         run: |
           set -e
 
-          echo "TARGET=$TARGET"
-          echo "SYSROOT=$SYSROOT"
+          echo "Target: $TARGET"
 
           "$TARGET-gcc" --version
           "$TARGET-g++" --version
+          "$TARGET-ar" --version
+          "$TARGET-ranlib" --version
 
       # ============================================================
       # BUILD ZLIB
@@ -157,7 +162,8 @@ jobs:
           test -f "$SYSROOT/include/zlib.h"
           test -f "$SYSROOT/lib/libz.a"
 
-          echo "zlib installed:"
+          echo
+          echo "zlib:"
           ls -lh "$SYSROOT/lib/libz.a"
 
       # ============================================================
@@ -174,7 +180,8 @@ jobs:
 
           tar -xf "libjpeg-turbo-${LIBJPEG_VERSION}.tar.gz"
 
-          mkdir jpeg-build
+          mkdir -p jpeg-build
+
           cd jpeg-build
 
           cmake \
@@ -208,12 +215,12 @@ jobs:
           test -f "$SYSROOT/lib/libjpeg.a"
 
           echo
-          echo "JPEG archive:"
+          echo "libjpeg-turbo:"
           ls -lh "$SYSROOT/lib/libjpeg.a"
 
           echo
-          echo "Checking JPEG12 symbols:"
-          "${TARGET}-nm" "$SYSROOT/lib/libjpeg.a" | grep "jpeg12_" || true
+          echo "Checking jpeg12 symbols:"
+          "${TARGET}-nm" "$SYSROOT/lib/libjpeg.a" | grep jpeg12_ || true
 
       # ============================================================
       # BUILD LIBPNG
@@ -261,7 +268,7 @@ jobs:
           test -f "$SYSROOT/lib/libpng16.a"
 
           echo
-          echo "libpng archive:"
+          echo "libpng:"
           ls -lh "$SYSROOT/lib/libpng16.a"
 
       # ============================================================
@@ -284,7 +291,12 @@ jobs:
           export CPPFLAGS="-I$SYSROOT/include"
           export CFLAGS="-O2 -march=armv7-a -mfpu=neon -mfloat-abi=hard"
           export LDFLAGS="-L$SYSROOT/lib"
-          export LIBS="$SYSROOT/lib/libjpeg.a $SYSROOT/lib/libpng16.a $SYSROOT/lib/libz.a -lm"
+          export LIBS="-Wl,--start-group \
+            $SYSROOT/lib/libjpeg.a \
+            $SYSROOT/lib/libpng16.a \
+            $SYSROOT/lib/libz.a \
+            -Wl,--end-group \
+            -lm"
 
           ./configure \
             --host="$TARGET" \
@@ -309,7 +321,7 @@ jobs:
           test -f "$SYSROOT/lib/libtiff.a"
 
           echo
-          echo "libtiff archive:"
+          echo "libtiff:"
           ls -lh "$SYSROOT/lib/libtiff.a"
 
       # ============================================================
@@ -365,7 +377,7 @@ jobs:
             LIBS="$LIBS"
 
           echo
-          echo "Checking generated Makefile..."
+          echo "Checking Leptonica Makefile..."
 
           grep -n "liblept_la_LIBADD" src/Makefile || true
 
@@ -388,46 +400,56 @@ jobs:
           make DESTDIR="$SYSROOT" install
 
           echo
-          echo "Searching Leptonica library..."
+          echo "Searching Leptonica shared library..."
 
-          find . -type f \( \
-            -name "liblept.so*" -o \
-            -name "libleptonica.so*" \
-          \) -print
+          find . -type f \
+            \( \
+              -name "liblept.so*" \
+              -o \
+              -name "libleptonica.so*" \
+            \) \
+            -print
 
-          LEPT_LIB="$(find src/.libs -maxdepth 1 -type f \( \
-            -name 'liblept.so*' -o \
-            -name 'libleptonica.so*' \
-          \) | head -n 1)"
+          LEPT_LIB="$(find src/.libs -maxdepth 1 -type f \
+            \( \
+              -name 'liblept.so*' \
+              -o \
+              -name 'libleptonica.so*' \
+            \) \
+            | head -n 1)"
 
           if [ -z "$LEPT_LIB" ]; then
             echo "ERROR: Leptonica shared library was not generated."
             exit 1
           fi
 
-          echo "Leptonica library: $LEPT_LIB"
+          echo "Found: $LEPT_LIB"
 
           cp -f "$LEPT_LIB" "$SYSROOT/lib/libleptonica.so"
 
           test -f "$SYSROOT/lib/libleptonica.so"
 
           echo
-          echo "Leptonica installed:"
+          echo "Installed Leptonica:"
           ls -lh "$SYSROOT/lib/libleptonica.so"
 
           echo
-          echo "Checking dynamic dependencies..."
+          echo "Leptonica NEEDED entries:"
 
-          "${TARGET}-readelf" -d "$SYSROOT/lib/libleptonica.so" || true
+          "${TARGET}-readelf" \
+            -d "$SYSROOT/lib/libleptonica.so" \
+            | grep NEEDED || true
 
           echo
-          echo "Checking unresolved JPEG12 symbols..."
+          echo "Checking unresolved jpeg12 symbols..."
 
-          if "${TARGET}-nm" -D "$SYSROOT/lib/libleptonica.so" 2>/dev/null \
-              | grep -E ' U jpeg12_(read|write)_' ; then
+          if "${TARGET}-nm" -D \
+              "$SYSROOT/lib/libleptonica.so" \
+              2>/dev/null \
+              | grep -E ' U jpeg12_(read|write)_'; then
 
             echo
-            echo "ERROR: Unresolved jpeg12 symbols remain in Leptonica."
+            echo "ERROR: Unresolved jpeg12 symbols remain."
             exit 1
           fi
 
@@ -436,7 +458,8 @@ jobs:
           echo
           echo "Checking forbidden dynamic dependencies..."
 
-          if "${TARGET}-readelf" -d "$SYSROOT/lib/libleptonica.so" \
+          if "${TARGET}-readelf" \
+              -d "$SYSROOT/lib/libleptonica.so" \
               | grep -E 'libjpeg|libpng|libtiff|libz\.so'; then
 
             echo
@@ -444,7 +467,7 @@ jobs:
             exit 1
           fi
 
-          echo "Static image dependencies check passed."
+          echo "Static image dependency check passed."
 
       # ============================================================
       # BUILD TESSERACT
@@ -527,14 +550,18 @@ jobs:
 
           make DESTDIR="$SYSROOT" install
 
-          echo
-          echo "Searching Tesseract library..."
-
-          find . -type f \
-            \( -name "libtesseract.so*" \) \
-            -print
-
           test -x "$SYSROOT/bin/tesseract"
+
+          echo
+          echo "Tesseract executable:"
+          ls -lh "$SYSROOT/bin/tesseract"
+
+          echo
+          echo "Tesseract libraries:"
+          find "$SYSROOT/lib" -maxdepth 1 \
+            -type f \
+            -name 'libtesseract.so*' \
+            -print
 
       # ============================================================
       # CREATE FINAL PACKAGE
@@ -554,7 +581,7 @@ jobs:
           mkdir -p "$FINAL/usr/lib"
 
           # --------------------------------------------------------
-          # TESSERACT EXECUTABLE
+          # TESSERACT
           # --------------------------------------------------------
 
           cp -f \
@@ -570,11 +597,14 @@ jobs:
             "$FINAL/usr/lib/libleptonica.so"
 
           # --------------------------------------------------------
-          # TESSERACT SHARED LIBRARY
+          # LIBTESSERACT
           # --------------------------------------------------------
 
-          TESS_LIB="$(find "$SYSROOT/lib" -maxdepth 1 -type f \
-            -name 'libtesseract.so*' | head -n 1)"
+          TESS_LIB="$(find "$SYSROOT/lib" \
+            -maxdepth 1 \
+            -type f \
+            -name 'libtesseract.so*' \
+            | head -n 1)"
 
           if [ -z "$TESS_LIB" ]; then
             echo "ERROR: libtesseract.so was not generated."
@@ -591,18 +621,26 @@ jobs:
           # STRIP
           # --------------------------------------------------------
 
-          "$TARGET-strip" "$FINAL/usr/bin/tesseract" || true
-          "$TARGET-strip" "$FINAL/usr/lib/libleptonica.so" || true
-          "$TARGET-strip" "$FINAL/usr/lib/libtesseract.so" || true
+          "$TARGET-strip" \
+            "$FINAL/usr/bin/tesseract" || true
+
+          "$TARGET-strip" \
+            "$FINAL/usr/lib/libleptonica.so" || true
+
+          "$TARGET-strip" \
+            "$FINAL/usr/lib/libtesseract.so" || true
 
           # --------------------------------------------------------
-          # VERIFY EXACT FILE LIST
+          # EXACT FILE CHECK
           # --------------------------------------------------------
 
           echo
-          echo "Final package contents:"
+          echo "Final files:"
 
-          find "$FINAL" -type f -printf '%P\n' | sort
+          find "$FINAL" \
+            -type f \
+            -printf '%P\n' \
+            | sort
 
           FILE_COUNT="$(find "$FINAL" -type f | wc -l)"
 
@@ -616,17 +654,9 @@ jobs:
           test -f "$FINAL/usr/lib/libleptonica.so"
           test -f "$FINAL/usr/lib/libtesseract.so"
 
-          # --------------------------------------------------------
-          # CREATE PACKAGE DIRECTORY
-          # --------------------------------------------------------
-
           mkdir -p "$PACKAGE"
 
           cp -a "$FINAL/usr" "$PACKAGE/"
-
-          echo
-          echo "Final package tree:"
-          find "$PACKAGE" -type f -printf '%P\n' | sort
 
       # ============================================================
       # VERIFY ARM ARCHITECTURE
@@ -639,15 +669,15 @@ jobs:
           FINAL="$BUILD/final"
 
           echo
-          echo "Checking executable architecture:"
+          echo "Tesseract:"
           file "$FINAL/usr/bin/tesseract"
 
           echo
-          echo "Checking Leptonica architecture:"
+          echo "Leptonica:"
           file "$FINAL/usr/lib/libleptonica.so"
 
           echo
-          echo "Checking Tesseract architecture:"
+          echo "Tesseract library:"
           file "$FINAL/usr/lib/libtesseract.so"
 
           echo
@@ -666,54 +696,40 @@ jobs:
             | grep -E 'Class|Machine'
 
       # ============================================================
-      # VERIFY LEPTONICA DEPENDENCIES
+      # VERIFY LEPTONICA
       # ============================================================
 
-      - name: Verify Leptonica dependencies
+      - name: Verify Leptonica
         run: |
           set -e
 
           FINAL="$BUILD/final"
 
           echo
-          echo "Leptonica dynamic dependencies:"
+          echo "Leptonica NEEDED:"
 
           "${TARGET}-readelf" -d \
-            "$FINAL/usr/lib/libleptonica.so" || true
+            "$FINAL/usr/lib/libleptonica.so" \
+            | grep NEEDED || true
 
           echo
-          echo "Checking forbidden libraries..."
+          echo "Checking forbidden dependencies..."
 
           if "${TARGET}-readelf" -d \
               "$FINAL/usr/lib/libleptonica.so" \
               | grep -E 'libjpeg|libpng|libtiff|libz\.so'; then
 
             echo
-            echo "ERROR: External image library dependency detected."
+            echo "ERROR: External image dependency detected."
             exit 1
           fi
 
-          echo "OK: Image libraries are statically embedded."
-
-      # ============================================================
-      # VERIFY JPEG12
-      # ============================================================
-
-      - name: Verify JPEG12 symbols
-        run: |
-          set -e
-
-          FINAL="$BUILD/final"
-
           echo
-          echo "Checking Leptonica JPEG12 symbols..."
-
-          "${TARGET}-nm" -D \
-            "$FINAL/usr/lib/libleptonica.so" \
-            | grep jpeg12_ || true
+          echo "Checking unresolved JPEG12 symbols..."
 
           if "${TARGET}-nm" -D \
               "$FINAL/usr/lib/libleptonica.so" \
+              2>/dev/null \
               | grep -E ' U jpeg12_(read|write)_'; then
 
             echo
@@ -722,23 +738,24 @@ jobs:
           fi
 
           echo
-          echo "JPEG12 check passed."
+          echo "Leptonica verification passed."
 
       # ============================================================
-      # VERIFY TESSERACT DEPENDENCIES
+      # VERIFY TESSERACT
       # ============================================================
 
-      - name: Verify Tesseract dependencies
+      - name: Verify Tesseract
         run: |
           set -e
 
           FINAL="$BUILD/final"
 
           echo
-          echo "Tesseract dynamic dependencies:"
+          echo "Tesseract NEEDED:"
 
           "${TARGET}-readelf" -d \
-            "$FINAL/usr/lib/libtesseract.so" || true
+            "$FINAL/usr/lib/libtesseract.so" \
+            | grep NEEDED || true
 
           echo
           echo "Checking forbidden image dependencies..."
@@ -752,52 +769,66 @@ jobs:
             exit 1
           fi
 
-          echo "OK: Tesseract image dependencies are static."
+          echo
+          echo "Tesseract dependency check passed."
 
       # ============================================================
-      # VERIFY VERSION SIGNATURE
+      # VERIFY CUSTOM VERSION
       # ============================================================
 
-      - name: Verify Tesseract signature
+      - name: Verify custom version
         run: |
           set -e
 
           FINAL="$BUILD/final"
 
           echo
-          echo "Searching custom version string..."
+          echo "Searching for custom version..."
 
-          strings \
-            "$FINAL/usr/bin/tesseract" \
-            | grep -F "5.5.3 - Compile ByArian"
+          if ! strings \
+              "$FINAL/usr/bin/tesseract" \
+              | grep -F "5.5.3 - Compile ByArian"; then
+
+            echo
+            echo "ERROR: Custom version string was not found."
+            exit 1
+          fi
 
           echo
-          echo "Custom signature found."
+          echo "Custom version found."
 
       # ============================================================
-      # VERIFY LIBRARY NEEDED ENTRIES
+      # FINAL FILE LIST
       # ============================================================
 
-      - name: Show final NEEDED entries
+      - name: Final package verification
         run: |
           set -e
 
           FINAL="$BUILD/final"
 
           echo
-          echo "Leptonica NEEDED:"
-          "${TARGET}-readelf" -d \
-            "$FINAL/usr/lib/libleptonica.so" \
-            | grep NEEDED || true
+          echo "=============================================="
+          echo "FINAL PACKAGE"
+          echo "=============================================="
+
+          find "$FINAL" \
+            -type f \
+            -printf '%P\n' \
+            | sort
 
           echo
-          echo "Tesseract NEEDED:"
-          "${TARGET}-readelf" -d \
-            "$FINAL/usr/lib/libtesseract.so" \
-            | grep NEEDED || true
+          echo "Expected files:"
+          echo "usr/bin/tesseract"
+          echo "usr/lib/libleptonica.so"
+          echo "usr/lib/libtesseract.so"
+
+          echo
+          echo "Actual file count:"
+          find "$FINAL" -type f | wc -l
 
       # ============================================================
-      # CREATE TAR.GZ
+      # CREATE ARCHIVE
       # ============================================================
 
       - name: Create final archive
@@ -811,17 +842,18 @@ jobs:
             usr
 
           echo
-          echo "Final archive:"
+          echo "Archive:"
           ls -lh \
             "tesseract-5.5.3-armv7l-final.tar.gz"
 
           echo
           echo "Archive contents:"
+
           tar -tzf \
             "tesseract-5.5.3-armv7l-final.tar.gz"
 
       # ============================================================
-      # FINAL SHA256
+      # SHA256
       # ============================================================
 
       - name: Generate SHA256
