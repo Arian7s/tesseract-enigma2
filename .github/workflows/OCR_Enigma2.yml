@@ -1,0 +1,317 @@
+# Tesseract 5.5.3 for ARMv7l (Enigma2 / sf8008) — Compile ByArian
+#
+# Put this file in:  .github/workflows/build-tesseract-armv7l.yml
+# Run:               Actions → "Tesseract 5.5.3 ARMv7l" → Run workflow
+#
+# Artifact contains exactly 3 files:
+#   tesseract                 →  /usr/bin/tesseract
+#   libtesseract.so.5.5.3     →  /usr/lib/libtesseract.so.5.5.3
+#   libleptonica.so.6.0.0     →  /usr/lib/libleptonica.so.6.0.0
+#
+# jpeg / png / tiff / zlib are statically linked into libleptonica.
+# libstdc++ and libgcc are statically linked (safe on older Enigma2 images).
+# glibc target: 2.35 (ubuntu-22.04 armhf) — runs on OpenATV / OpenPLi sf8008.
+
+name: Tesseract 5.5.3 ARMv7l
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/build-tesseract-armv7l.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tesseract-armv7l-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Cross-compile armv7l
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+
+    env:
+      PREFIX: ${{ github.workspace }}/prefix
+      OUT: ${{ github.workspace }}/out
+      WORK: ${{ github.workspace }}/build-src
+      DEBIAN_FRONTEND: noninteractive
+
+    steps:
+      - name: Install armhf cross toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc-arm-linux-gnueabihf \
+            g++-arm-linux-gnueabihf \
+            binutils-arm-linux-gnueabihf \
+            cmake \
+            ninja-build \
+            pkg-config \
+            patchelf \
+            qemu-user-static \
+            binfmt-support \
+            curl \
+            ca-certificates \
+            file \
+            xz-utils
+
+      - name: Cross-compile Tesseract + Leptonica
+        run: |
+          set -euo pipefail
+
+          mkdir -p "$PREFIX" "$OUT" "$WORK"
+          export PKG_CONFIG_LIBDIR="$PREFIX/lib/pkgconfig"
+          export PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig"
+          export PKG_CONFIG_SYSROOT_DIR=""
+          export PKG_CONFIG="pkg-config --static"
+
+          ARM_FLAGS="-O2 -march=armv7-a -mtune=cortex-a15 -mfpu=neon-vfpv4 -mfloat-abi=hard -fPIC -pthread -fomit-frame-pointer"
+
+          cat > "$WORK/toolchain.cmake" << EOF
+          set(CMAKE_SYSTEM_NAME Linux)
+          set(CMAKE_SYSTEM_PROCESSOR arm)
+          set(CMAKE_C_COMPILER arm-linux-gnueabihf-gcc)
+          set(CMAKE_CXX_COMPILER arm-linux-gnueabihf-g++)
+          set(CMAKE_ASM_COMPILER arm-linux-gnueabihf-gcc)
+          set(CMAKE_AR arm-linux-gnueabihf-ar)
+          set(CMAKE_RANLIB arm-linux-gnueabihf-ranlib)
+          set(CMAKE_STRIP arm-linux-gnueabihf-strip)
+          set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
+          set(CMAKE_FIND_ROOT_PATH "${PREFIX}")
+          set(CMAKE_PREFIX_PATH "${PREFIX}")
+          set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
+          set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
+          set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
+          set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE ONLY)
+          EOF
+
+          fetch_src() {
+            local dest="$1"; shift
+            mkdir -p "$dest"
+            local url
+            for url in "$@"; do
+              echo "==> fetching $url"
+              if curl -fsSL --retry 5 --retry-delay 2 "$url" | tar -xz --strip-components=1 -C "$dest"; then
+                return 0
+              fi
+              echo "    failed, trying next mirror"
+            done
+            echo "ERROR: could not fetch $dest"
+            exit 1
+          }
+
+          cfg() {
+            local src="$1"; shift
+            cmake -S "$src" -B "$src/build" -G Ninja \
+              -DCMAKE_TOOLCHAIN_FILE="$WORK/toolchain.cmake" \
+              -DCMAKE_INSTALL_PREFIX="$PREFIX" \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DCMAKE_INSTALL_LIBDIR=lib \
+              -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+              -DCMAKE_C_FLAGS="$ARM_FLAGS" \
+              -DCMAKE_CXX_FLAGS="$ARM_FLAGS" \
+              -DCMAKE_ASM_FLAGS="$ARM_FLAGS" \
+              "$@"
+            cmake --build "$src/build" --parallel "$(nproc)"
+            cmake --install "$src/build"
+          }
+
+          fetch_src "$WORK/zlib" "https://github.com/madler/zlib/releases/download/v1.3.2/zlib-1.3.2.tar.gz"
+          fetch_src "$WORK/jpeg" "https://github.com/libjpeg-turbo/libjpeg-turbo/releases/download/3.2.0/libjpeg-turbo-3.2.0.tar.gz"
+          fetch_src "$WORK/png" "https://github.com/pnggroup/libpng/archive/refs/tags/v1.6.58.tar.gz"
+          fetch_src "$WORK/tiff" \
+            "https://download.osgeo.org/libtiff/tiff-4.7.2.tar.gz" \
+            "https://gitlab.com/libtiff/libtiff/-/archive/v4.7.2/libtiff-v4.7.2.tar.gz"
+          fetch_src "$WORK/leptonica" "https://github.com/DanBloomberg/leptonica/archive/refs/tags/1.87.0.tar.gz"
+          fetch_src "$WORK/tesseract" "https://github.com/tesseract-ocr/tesseract/archive/refs/tags/5.5.3.tar.gz"
+
+          echo "==> zlib 1.3.2 (static)"
+          cfg "$WORK/zlib" \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DZLIB_BUILD_EXAMPLES=OFF
+
+          echo "==> libjpeg-turbo 3.2.0 (static, JPEG 8d ABI + NEON)"
+          cfg "$WORK/jpeg" \
+            -DENABLE_SHARED=OFF \
+            -DENABLE_STATIC=ON \
+            -DWITH_TURBOJPEG=OFF \
+            -DWITH_JPEG8=ON \
+            -DWITH_SIMD=ON \
+            -DREQUIRE_SIMD=OFF
+
+          echo "==> libpng 1.6.58 (static)"
+          cfg "$WORK/png" \
+            -DPNG_SHARED=OFF \
+            -DPNG_STATIC=ON \
+            -DPNG_TESTS=OFF \
+            -DPNG_TOOLS=OFF \
+            -DZLIB_ROOT="$PREFIX"
+
+          echo "==> libtiff 4.7.2 (static)"
+          cfg "$WORK/tiff" \
+            -DBUILD_SHARED_LIBS=OFF \
+            -Dtiff-tools=OFF \
+            -Dtiff-tests=OFF \
+            -Dtiff-docs=OFF \
+            -Dtiff-contrib=OFF \
+            -Dtiff-install=ON \
+            -Dcxx=OFF \
+            -Djpeg=ON \
+            -Dzlib=ON \
+            -Dlibdeflate=OFF \
+            -Djbig=OFF \
+            -Dlzma=OFF \
+            -Dzstd=OFF \
+            -Dwebp=OFF \
+            -Dlerc=OFF
+
+          # Force leptonica to absorb jpeg/png/tiff/zlib (no extra .so on the box)
+          find "$PREFIX/lib" -type f \( -name '*.so' -o -name '*.so.*' \) -delete
+          find "$PREFIX/lib" -type l -name '*.so*' -delete
+
+          echo "==> leptonica 1.87.0 (shared, soname 6.0.0)"
+          cfg "$WORK/leptonica" \
+            -DBUILD_SHARED_LIBS=ON \
+            -DBUILD_PROG=OFF \
+            -DSYM_LINK=OFF \
+            -DSTRICT_CONF=ON \
+            -DENABLE_ZLIB=ON \
+            -DENABLE_PNG=ON \
+            -DENABLE_JPEG=ON \
+            -DENABLE_TIFF=ON \
+            -DENABLE_GIF=OFF \
+            -DENABLE_WEBP=OFF \
+            -DENABLE_OPENJPEG=OFF
+
+          echo "5.5.3 - Compile ByArian" > "$WORK/tesseract/VERSION"
+
+          echo "==> tesseract 5.5.3 (shared + binary)"
+          cfg "$WORK/tesseract" \
+            -DBUILD_SHARED_LIBS=ON \
+            -DBUILD_TRAINING_TOOLS=OFF \
+            -DBUILD_TESTS=OFF \
+            -DGRAPHICS_DISABLED=ON \
+            -DDISABLE_ARCHIVE=ON \
+            -DDISABLE_CURL=ON \
+            -DOPENMP_BUILD=OFF \
+            -DENABLE_NATIVE=OFF \
+            -DDISABLED_LEGACY_ENGINE=OFF \
+            -DCMAKE_DISABLE_FIND_PACKAGE_LibArchive=TRUE \
+            -DCMAKE_DISABLE_FIND_PACKAGE_CURL=TRUE \
+            -DCMAKE_DISABLE_FIND_PACKAGE_ICU=TRUE \
+            -DCMAKE_CXX_FLAGS="$ARM_FLAGS -static-libstdc++ -static-libgcc" \
+            -DCMAKE_EXE_LINKER_FLAGS="-static-libstdc++ -static-libgcc -Wl,--as-needed" \
+            -DCMAKE_SHARED_LINKER_FLAGS="-static-libstdc++ -static-libgcc -Wl,--as-needed" \
+            -DCMAKE_INSTALL_RPATH="/usr/lib" \
+            -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON
+
+          echo "==> collect 3 files"
+          TESS_BIN="$PREFIX/bin/tesseract"
+          TESS_LIB="$(find "$PREFIX/lib" -name 'libtesseract.so.5.5.3' | head -n1)"
+          LEPT_LIB="$(find "$PREFIX/lib" -name 'libleptonica.so.6.0.0' | head -n1)"
+
+          test -x "$TESS_BIN"
+          test -n "$TESS_LIB" -a -f "$TESS_LIB"
+          test -n "$LEPT_LIB" -a -f "$LEPT_LIB"
+
+          install -m 0755 "$TESS_BIN" "$OUT/tesseract"
+          install -m 0755 "$TESS_LIB" "$OUT/libtesseract.so.5.5.3"
+          install -m 0755 "$LEPT_LIB" "$OUT/libleptonica.so.6.0.0"
+
+          arm-linux-gnueabihf-strip --strip-unneeded \
+            "$OUT/tesseract" \
+            "$OUT/libtesseract.so.5.5.3" \
+            "$OUT/libleptonica.so.6.0.0"
+
+          echo "==> SONAME = filename (no extra symlinks on the box)"
+          patchelf --set-soname libleptonica.so.6.0.0 "$OUT/libleptonica.so.6.0.0"
+          patchelf --set-soname libtesseract.so.5.5.3 "$OUT/libtesseract.so.5.5.3"
+
+          LEPT_NEEDED="$(readelf -d "$OUT/libtesseract.so.5.5.3" | sed -n 's/.*Shared library: \[\(libleptonica[^]]*\)\].*/\1/p' | head -n1)"
+          if [ -n "$LEPT_NEEDED" ] && [ "$LEPT_NEEDED" != "libleptonica.so.6.0.0" ]; then
+            patchelf --replace-needed "$LEPT_NEEDED" "libleptonica.so.6.0.0" "$OUT/libtesseract.so.5.5.3"
+          fi
+
+          TESS_NEEDED="$(readelf -d "$OUT/tesseract" | sed -n 's/.*Shared library: \[\(libtesseract[^]]*\)\].*/\1/p' | head -n1)"
+          if [ -n "$TESS_NEEDED" ] && [ "$TESS_NEEDED" != "libtesseract.so.5.5.3" ]; then
+            patchelf --replace-needed "$TESS_NEEDED" "libtesseract.so.5.5.3" "$OUT/tesseract"
+          fi
+
+          patchelf --set-rpath /usr/lib "$OUT/tesseract"
+          patchelf --set-rpath /usr/lib "$OUT/libtesseract.so.5.5.3"
+
+          echo "==> dynamic deps"
+          for f in tesseract libtesseract.so.5.5.3 libleptonica.so.6.0.0; do
+            echo "---- $f"
+            file "$OUT/$f"
+            readelf -h "$OUT/$f" | grep -E 'Class:|Machine:'
+            readelf -d "$OUT/$f" | grep -E 'NEEDED|SONAME|RPATH|RUNPATH' || true
+          done
+
+          if readelf -d "$OUT/tesseract" "$OUT/libtesseract.so.5.5.3" "$OUT/libleptonica.so.6.0.0" \
+               | grep NEEDED | grep -Ei 'libjpeg|libpng|libtiff|libz\.so|libwebp|libopenjp2|libgif|libarchive|libcurl|libgomp|libstdc\+\+|libicu'; then
+            echo "ERROR: unexpected dynamic dependency (must stay at 3 files only)"
+            exit 1
+          fi
+
+          for f in tesseract libtesseract.so.5.5.3 libleptonica.so.6.0.0; do
+            if ! readelf -h "$OUT/$f" | grep -q 'Machine:[[:space:]]*ARM$'; then
+              echo "ERROR: $f is not 32-bit ARM"
+              exit 1
+            fi
+            if ! readelf -h "$OUT/$f" | grep -q 'Class:[[:space:]]*ELF32'; then
+              echo "ERROR: $f is not ELF32"
+              exit 1
+            fi
+          done
+
+          echo "==> tesseract --version (qemu-arm)"
+          export QEMU_LD_PREFIX=/usr/arm-linux-gnueabihf
+          export LD_LIBRARY_PATH="$OUT"
+          if ! qemu-arm-static -L /usr/arm-linux-gnueabihf "$OUT/tesseract" --version | tee "$WORK/version.txt"; then
+            echo "ERROR: qemu failed to run tesseract"
+            exit 1
+          fi
+
+          grep -F "tesseract 5.5.3 - Compile ByArian" "$WORK/version.txt"
+          grep -F "leptonica-1.87.0" "$WORK/version.txt"
+          grep -F "libjpeg 8d (libjpeg-turbo 3.2.0)" "$WORK/version.txt"
+          grep -F "libpng 1.6.58" "$WORK/version.txt"
+          grep -F "libtiff 4.7.2" "$WORK/version.txt"
+          grep -F "zlib 1.3.2" "$WORK/version.txt"
+          if grep -Ei 'gif|webp|openjp' "$WORK/version.txt"; then
+            echo "ERROR: extra image libraries leaked into --version"
+            exit 1
+          fi
+
+          {
+            echo "## tesseract --version"
+            echo '```'
+            cat "$WORK/version.txt"
+            echo '```'
+            echo
+            echo "Install on the box:"
+            echo '```'
+            echo "cp tesseract /usr/bin/tesseract"
+            echo "cp libtesseract.so.5.5.3 /usr/lib/"
+            echo "cp libleptonica.so.6.0.0 /usr/lib/"
+            echo "chmod 755 /usr/bin/tesseract"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo "==> done"
+          ls -lh "$OUT"
+
+      - name: Upload 3 files
+        uses: actions/upload-artifact@v4
+        with:
+          name: tesseract-5.5.3-armv7l-ByArian
+          path: |
+            out/tesseract
+            out/libtesseract.so.5.5.3
+            out/libleptonica.so.6.0.0
+          if-no-files-found: error
+          retention-days: 30
