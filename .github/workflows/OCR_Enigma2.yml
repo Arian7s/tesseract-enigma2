@@ -170,6 +170,16 @@ jobs:
       run: |
         set -euxo pipefail
 
+        # ============================================================
+        # هنا نفرض أسماء الإصدارات النهائية يدويًا
+        # بدل الاعتماد على أرقام libtool الداخلية
+        # ============================================================
+        TESS_VER="5.5.3"      # إصدار Tesseract الفعلي (من التاغ)
+        LEPT_VER="6.0.0"      # إصدار ABI لـ Leptonica
+
+        echo "TESS_VER = $TESS_VER"
+        echo "LEPT_VER = $LEPT_VER"
+
         mkdir -p package/usr/bin package/usr/lib
 
         TESS_BIN=$(find build_out/usr/bin -name 'tesseract' -type f | head -n 1)
@@ -184,14 +194,7 @@ jobs:
         [ -f "$LIB_TESS" ] || { echo "ERROR: libtesseract not found"; exit 1; }
         [ -f "$LIB_LEPT" ] || { echo "ERROR: libleptonica not found"; exit 1; }
 
-        # استخراج أرقام الإصدارات الكاملة من أسماء الملفات
-        TESS_VER=$(basename "$LIB_TESS" | sed 's/^libtesseract\.so\.//')
-        LEPT_VER=$(basename "$LIB_LEPT" | sed 's/^libleptonica\.so\.//')
-
-        echo "TESS_VER = $TESS_VER"
-        echo "LEPT_VER = $LEPT_VER"
-
-        # الأسماء النهائية بأرقام الإصدارات الكاملة
+        # نسخ بالأسماء النهائية التي نريدها
         cp "$TESS_BIN"  package/usr/bin/tesseract
         cp "$LIB_TESS"  "package/usr/lib/libtesseract.so.${TESS_VER}"
         cp "$LIB_LEPT"  "package/usr/lib/libleptonica.so.${LEPT_VER}"
@@ -201,19 +204,17 @@ jobs:
         arm-linux-gnueabihf-strip --strip-unneeded  "package/usr/lib/libtesseract.so.${TESS_VER}"
         arm-linux-gnueabihf-strip --strip-unneeded  "package/usr/lib/libleptonica.so.${LEPT_VER}"
 
-        # SONAME = اسم الملف الكامل (مع الإصدار)
+        # SONAME = الاسم الكامل مع الإصدار المطلوب
         patchelf --set-soname "libtesseract.so.${TESS_VER}"  "package/usr/lib/libtesseract.so.${TESS_VER}"
         patchelf --set-soname "libleptonica.so.${LEPT_VER}"  "package/usr/lib/libleptonica.so.${LEPT_VER}"
 
-        # تصحيح NEEDED في tesseract ليُطابق الأسماء الجديدة
-        patchelf --replace-needed libtesseract.so.5           "libtesseract.so.${TESS_VER}"  package/usr/bin/tesseract || true
-        patchelf --replace-needed "libtesseract.so.${TESS_VER}" "libtesseract.so.${TESS_VER}" package/usr/bin/tesseract || true
-        patchelf --replace-needed libleptonica.so.6           "libleptonica.so.${LEPT_VER}"  package/usr/bin/tesseract || true
-        patchelf --replace-needed "libleptonica.so.${LEPT_VER}" "libleptonica.so.${LEPT_VER}" package/usr/bin/tesseract || true
+        # تنظيف NEEDED في tesseract
+        patchelf --remove-needed libtesseract.so.5           package/usr/bin/tesseract || true
+        patchelf --replace-needed libtesseract.so.5 "libtesseract.so.${TESS_VER}" package/usr/bin/tesseract || true
+        patchelf --replace-needed libleptonica.so.6 "libleptonica.so.${LEPT_VER}" package/usr/bin/tesseract || true
 
-        # تصحيح NEEDED في libtesseract.so
-        patchelf --replace-needed libleptonica.so.6           "libleptonica.so.${LEPT_VER}"  "package/usr/lib/libtesseract.so.${TESS_VER}" || true
-        patchelf --replace-needed "libleptonica.so.${LEPT_VER}" "libleptonica.so.${LEPT_VER}" "package/usr/lib/libtesseract.so.${TESS_VER}" || true
+        # تنظيف NEEDED في libtesseract
+        patchelf --replace-needed libleptonica.so.6 "libleptonica.so.${LEPT_VER}" "package/usr/lib/libtesseract.so.${TESS_VER}" || true
 
         # RPATH
         patchelf --set-rpath /usr/lib package/usr/bin/tesseract
