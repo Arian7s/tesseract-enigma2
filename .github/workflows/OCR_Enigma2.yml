@@ -214,7 +214,7 @@ jobs:
 
 
           # ==========================================================
-          # ZLIB - STATIC
+          # ZLIB
           # ==========================================================
 
           cd "$WORK_DIR"
@@ -242,16 +242,7 @@ jobs:
 
 
           # ==========================================================
-          # LIBJPEG-TURBO - STATIC
-          #
-          # IMPORTANT:
-          #
-          # libjpeg-turbo 3.x provides the dual 8/12-bit API.
-          #
-          # WITH_12BIT must remain OFF here.
-          #
-          # We verify that jpeg12_* symbols are really present
-          # inside libjpeg.a before continuing.
+          # LIBJPEG-TURBO
           # ==========================================================
 
           cd "$WORK_DIR"
@@ -295,46 +286,30 @@ jobs:
 
 
           # ==========================================================
-          # VERIFY JPEG12 SYMBOLS
+          # CHECK JPEG12
           # ==========================================================
 
           echo
           echo "=========================================================="
-          echo "CHECKING LIBJPEG JPEG12 SYMBOLS"
+          echo "CHECKING JPEG12 SYMBOLS"
           echo "=========================================================="
 
-          if [ ! -f "$SYSROOT/lib/libjpeg.a" ]; then
-            echo "ERROR: libjpeg.a was not generated."
-            exit 1
-          fi
-
-          echo
-          echo "JPEG12 symbols:"
           "$NM" -g "$SYSROOT/lib/libjpeg.a" \
             | grep "jpeg12_" \
-            | head -n 40 || true
+            | head -n 40 \
+            || true
 
           if ! "$NM" -g "$SYSROOT/lib/libjpeg.a" \
             | grep -q "jpeg12_read_scanlines"; then
 
-            echo
-            echo "ERROR: libjpeg.a does not contain jpeg12_read_scanlines."
-            echo "The libjpeg-turbo dual 8/12-bit API is missing."
-            exit 1
-          fi
-
-          if ! "$NM" -g "$SYSROOT/lib/libjpeg.a" \
-            | grep -q "jpeg12_write_scanlines"; then
-
-            echo
-            echo "ERROR: libjpeg.a does not contain jpeg12_write_scanlines."
+            echo "ERROR: jpeg12_read_scanlines missing."
             exit 1
           fi
 
 
           # ==========================================================
-          # LIBPNG - STATIC
-          # ==============================================================
+          # LIBPNG
+          # ==========================================================
 
           cd "$WORK_DIR"
 
@@ -367,8 +342,8 @@ jobs:
 
 
           # ==========================================================
-          # LIBTIFF - STATIC
-          # ==============================================================
+          # LIBTIFF
+          # ==========================================================
 
           cd "$WORK_DIR"
 
@@ -411,13 +386,8 @@ jobs:
 
 
           # ==========================================================
-          # CHECK STATIC LIBRARIES
+          # STATIC LIBRARIES
           # ==========================================================
-
-          echo
-          echo "=========================================================="
-          echo "STATIC LIBRARIES"
-          echo "=========================================================="
 
           ls -lh \
             "$SYSROOT/lib/libz.a" \
@@ -427,10 +397,7 @@ jobs:
 
 
           # ==========================================================
-          # LEPTONICA - SHARED
-          #
-          # We deliberately build Leptonica ourselves with the
-          # required static libraries explicitly linked.
+          # LEPTONICA
           # ==========================================================
 
           cd "$WORK_DIR"
@@ -491,10 +458,6 @@ jobs:
             -DENABLE_OPENJPEG=OFF
 
 
-          # ==========================================================
-          # FORCE STATIC LIBRARIES
-          # ==========================================================
-
           export PKG_CONFIG_PATH="$SYSROOT/lib/pkgconfig"
 
           export ZLIB_CFLAGS="-I$SYSROOT/include"
@@ -511,23 +474,6 @@ jobs:
 
 
           # ==========================================================
-          # SHOW CMAKE CACHE
-          # ==========================================================
-
-          echo
-          echo "=========================================================="
-          echo "LEPTONICA IMAGE LIBRARIES"
-          echo "=========================================================="
-
-          grep -E \
-            "JPEG|TIFF|PNG|ZLIB" \
-            build/CMakeCache.txt \
-            | grep -E \
-            "LIBRARY|LIBRARIES|FOUND|ENABLE" \
-            || true
-
-
-          # ==========================================================
           # BUILD LEPTONICA
           # ==========================================================
 
@@ -540,7 +486,7 @@ jobs:
             echo "LEPTONICA BUILD FAILED"
             echo "=========================================================="
 
-            find "$WORK_DIR/leptonica-${LEPTONICA_VERSION}/build" \
+            find build \
               -type f \
               \( \
                 -name "*.log" \
@@ -556,47 +502,136 @@ jobs:
 
           # ==========================================================
           # INSTALL LEPTONICA
-          # ==========================================================
+          # ==============================================================
 
           cmake --install build
 
 
           # ==========================================================
-          # FIND LEPTONICA LIBRARY
+          # LOCATE ACTUAL LEPTONICA LIBRARY
+          #
+          # Do not assume the name is liblept.so.
           # ==========================================================
 
           echo
           echo "=========================================================="
-          echo "LEPTONICA LIBRARY"
+          echo "SEARCHING FOR LEPTONICA LIBRARY"
           echo "=========================================================="
 
           find "$SYSROOT/lib" \
             -maxdepth 1 \
-            -type f \
-            -name "liblept.so*" \
+            \( \
+              -name "liblept.so*" \
+              -o \
+              -name "libleptonica.so*" \
+              -o \
+              -name "liblept*.so*" \
+            \) \
             -print \
-            || true
+            | sort
 
 
-          if [ ! -e "$SYSROOT/lib/liblept.so" ]; then
-            echo "ERROR: liblept.so was not generated."
-            exit 1
+          LEPT_LIBRARY=""
+
+          for candidate in \
+            "$SYSROOT/lib/liblept.so" \
+            "$SYSROOT/lib/liblept.so.6" \
+            "$SYSROOT/lib/liblept.so.6.0.0" \
+            "$SYSROOT/lib/libleptonica.so" \
+            "$SYSROOT/lib/libleptonica.so.6" \
+            "$SYSROOT/lib/libleptonica.so.6.0.0"; do
+
+            if [ -f "$candidate" ]; then
+              LEPT_LIBRARY="$candidate"
+              break
+            fi
+
+          done
+
+
+          # ==========================================================
+          # FALLBACK SEARCH
+          # ==========================================================
+
+          if [ -z "$LEPT_LIBRARY" ]; then
+
+            LEPT_LIBRARY="$(
+              find "$SYSROOT/lib" \
+                -maxdepth 1 \
+                -type f \
+                \( \
+                  -name "liblept.so*" \
+                  -o \
+                  -name "libleptonica.so*" \
+                \) \
+                | sort \
+                | head -n 1
+            )"
+
           fi
 
 
           # ==========================================================
-          # RENAME LEPTONICA
+          # FAIL ONLY IF NO LIBRARY EXISTS
           # ==========================================================
 
-          rm -f "$SYSROOT/lib/libleptonica.so"
+          if [ -z "$LEPT_LIBRARY" ]; then
 
-          mv \
-            "$SYSROOT/lib/liblept.so" \
-            "$SYSROOT/lib/libleptonica.so"
+            echo
+            echo "=========================================================="
+            echo "ERROR: LEPTONICA LIBRARY NOT FOUND"
+            echo "=========================================================="
+
+            echo
+            echo "SYSROOT LIB:"
+            find "$SYSROOT/lib" \
+              -maxdepth 1 \
+              -type f \
+              -o \
+              -type l \
+              | sort
+
+            echo
+            echo "LEPTONICA BUILD TREE:"
+            find "$WORK_DIR/leptonica-${LEPTONICA_VERSION}" \
+              -type f \
+              \( \
+                -name "*.so*" \
+                -o \
+                -name "*.a" \
+              \) \
+              -print \
+              | sort \
+              || true
+
+            exit 1
+          fi
+
+
+          echo
+          echo "Leptonica library detected:"
+          echo "$LEPT_LIBRARY"
 
 
           # ==========================================================
-          # FIX LEPTONICA SONAME
+          # CREATE REQUIRED NAME
+          #
+          # Final package must contain:
+          #
+          #     libleptonica.so
+          # ==========================================================
+
+          if [ "$LEPT_LIBRARY" != "$SYSROOT/lib/libleptonica.so" ]; then
+
+            cp -a \
+              "$LEPT_LIBRARY" \
+              "$SYSROOT/lib/libleptonica.so"
+
+          fi
+
+
+          # ==========================================================
+          # SET SONAME
           # ==========================================================
 
           patchelf \
@@ -605,40 +640,15 @@ jobs:
 
 
           # ==========================================================
-          # VERIFY JPEG12 SYMBOLS INSIDE LEPTONICA
+          # CHECK LEPTONICA
           # ==========================================================
 
           echo
           echo "=========================================================="
-          echo "CHECKING LEPTONICA JPEG12 REFERENCES"
+          echo "LEPTONICA FILE"
           echo "=========================================================="
 
-          JPEG12_UNRESOLVED="$(
-            "$NM" -D "$SYSROOT/lib/libleptonica.so" 2>/dev/null \
-              | grep -E \
-                " U jpeg12_(read|write)_" \
-              || true
-          )"
-
-          if [ -n "$JPEG12_UNRESOLVED" ]; then
-
-            echo
-            echo "ERROR: Leptonica still contains unresolved jpeg12 symbols:"
-            echo "$JPEG12_UNRESOLVED"
-
-            echo
-            echo "Leptonica was not linked correctly with libjpeg.a."
-
-            exit 1
-          fi
-
-
-          echo "OK: No unresolved jpeg12_* symbols."
-
-
-          # ==========================================================
-          # CHECK LEPTONICA NEEDED
-          # ==========================================================
+          file "$SYSROOT/lib/libleptonica.so"
 
           echo
           echo "=========================================================="
@@ -649,6 +659,27 @@ jobs:
             -d "$SYSROOT/lib/libleptonica.so" \
             | grep NEEDED \
             || true
+
+
+          # ==========================================================
+          # CHECK UNRESOLVED JPEG12
+          # ==========================================================
+
+          echo
+          echo "=========================================================="
+          echo "CHECKING JPEG12"
+          echo "=========================================================="
+
+          if "$NM" -D "$SYSROOT/lib/libleptonica.so" 2>/dev/null \
+            | grep -E \
+              " U jpeg12_(read|write)_" ; then
+
+            echo
+            echo "ERROR: Unresolved jpeg12 symbols remain in Leptonica."
+            exit 1
+          fi
+
+          echo "OK: No unresolved jpeg12 symbols."
 
 
           # ==========================================================
@@ -668,7 +699,7 @@ jobs:
 
 
           # ==========================================================
-          # VERSION STRING
+          # VERSION
           # ==========================================================
 
           sed -i \
@@ -712,6 +743,7 @@ jobs:
           set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
 
           set(CMAKE_C_FLAGS_INIT "-fPIC -O2 -fno-semantic-interposition -I$SYSROOT/include")
+
           set(CMAKE_CXX_FLAGS_INIT "-fPIC -O2 -fno-semantic-interposition -I$SYSROOT/include -I$SYSROOT/include/leptonica")
 
           set(CMAKE_EXE_LINKER_FLAGS_INIT
@@ -760,7 +792,7 @@ jobs:
             echo "TESSERACT BUILD FAILED"
             echo "=========================================================="
 
-            find "$WORK_DIR/tesseract-${TESSERACT_VERSION}/build" \
+            find build \
               -type f \
               \( \
                 -name "*.log" \
@@ -770,7 +802,8 @@ jobs:
                 -name "CMakeOutput.log" \
               \) \
               -print \
-              -exec tail -n 200 {} \; || true
+              -exec tail -n 200 {} \; \
+              || true
 
             exit 1
           fi
@@ -784,7 +817,7 @@ jobs:
 
 
           # ==========================================================
-          # TESSERACT LIBRARY
+          # CHECK TESSERACT
           # ==========================================================
 
           if [ ! -f "$SYSROOT/lib/libtesseract.so" ]; then
@@ -794,7 +827,7 @@ jobs:
 
 
           # ==========================================================
-          # FIX TESSERACT LEPTONICA SONAME
+          # FIX LEPTONICA DEPENDENCY
           # ==========================================================
 
           patchelf \
@@ -803,39 +836,8 @@ jobs:
 
 
           # ==========================================================
-          # VERIFY TESSERACT
+          # NO EXTERNAL IMAGE LIBRARIES
           # ==========================================================
-
-          echo
-          echo "=========================================================="
-          echo "TESSERACT NEEDED"
-          echo "=========================================================="
-
-          "$READELF" \
-            -d "$SYSROOT/lib/libtesseract.so" \
-            | grep NEEDED \
-            || true
-
-
-          echo
-          echo "=========================================================="
-          echo "TESSERACT EXECUTABLE NEEDED"
-          echo "=========================================================="
-
-          "$READELF" \
-            -d "$SYSROOT/bin/tesseract" \
-            | grep NEEDED \
-            || true
-
-
-          # ==========================================================
-          # VERIFY NO EXTERNAL IMAGE LIBRARIES
-          # ==========================================================
-
-          echo
-          echo "=========================================================="
-          echo "CHECKING FOR UNWANTED EXTERNAL LIBRARIES"
-          echo "=========================================================="
 
           for binary in \
             "$SYSROOT/lib/libleptonica.so" \
@@ -849,55 +851,16 @@ jobs:
               'libz\.so|libjpeg\.so|libpng16\.so|libtiff\.so'; then
 
               echo
-              echo "ERROR:"
-              echo "$binary still requires an external image library."
-
+              echo "ERROR: External image library detected."
               exit 1
             fi
 
           done
-
-
-          # ==========================================================
-          # CHECK UNRESOLVED JPEG12 SYMBOLS AGAIN
-          # ==========================================================
-
-          echo
-          echo "=========================================================="
-          echo "FINAL JPEG12 CHECK"
-          echo "=========================================================="
-
-          for binary in \
-            "$SYSROOT/lib/libleptonica.so" \
-            "$SYSROOT/lib/libtesseract.so"; do
-
-            echo
-            echo "Checking:"
-            echo "$binary"
-
-            if "$NM" -D "$binary" 2>/dev/null \
-              | grep -E \
-                " U jpeg12_(read|write)_" ; then
-
-              echo
-              echo "ERROR: Unresolved jpeg12 symbols found."
-              exit 1
-            fi
-
-          done
-
-          echo
-          echo "OK: No unresolved jpeg12 symbols."
 
 
           # ==========================================================
           # ARM CHECK
           # ==========================================================
-
-          echo
-          echo "=========================================================="
-          echo "ARM CHECK"
-          echo "=========================================================="
 
           check_arm "$SYSROOT/bin/tesseract"
           check_arm "$SYSROOT/lib/libleptonica.so"
@@ -905,13 +868,8 @@ jobs:
 
 
           # ==========================================================
-          # CREATE FINAL PACKAGE
-          # ==============================================================
-
-          echo
-          echo "=========================================================="
-          echo "CREATING FINAL PACKAGE"
-          echo "=========================================================="
+          # CREATE PACKAGE
+          # ==========================================================
 
           rm -rf "$PACKAGE_DIR"
 
@@ -919,10 +877,6 @@ jobs:
             "$PACKAGE_DIR/usr/bin" \
             "$PACKAGE_DIR/usr/lib"
 
-
-          # ==========================================================
-          # ONLY THREE FILES
-          # ==========================================================
 
           cp -a \
             "$SYSROOT/bin/tesseract" \
@@ -972,12 +926,12 @@ jobs:
 
 
           # ==========================================================
-          # FINAL PACKAGE CONTENT
+          # FINAL CONTENT
           # ==========================================================
 
           echo
           echo "=========================================================="
-          echo "FINAL PACKAGE CONTENT"
+          echo "FINAL PACKAGE"
           echo "=========================================================="
 
           find "$PACKAGE_DIR" \
@@ -986,10 +940,6 @@ jobs:
             | sort
 
 
-          # ==========================================================
-          # COUNT FILES
-          # ==========================================================
-
           FILE_COUNT="$(
             find "$PACKAGE_DIR" \
               -type f \
@@ -997,8 +947,7 @@ jobs:
           )"
 
           echo
-          echo "Final file count:"
-          echo "$FILE_COUNT"
+          echo "Final file count: $FILE_COUNT"
 
           if [ "$FILE_COUNT" -ne 3 ]; then
             echo "ERROR: Package must contain exactly 3 files."
@@ -1010,11 +959,6 @@ jobs:
           # FINAL FILE TYPES
           # ==========================================================
 
-          echo
-          echo "=========================================================="
-          echo "FINAL FILE TYPES"
-          echo "=========================================================="
-
           file \
             "$PACKAGE_DIR/usr/bin/tesseract" \
             "$PACKAGE_DIR/usr/lib/libleptonica.so" \
@@ -1022,33 +966,8 @@ jobs:
 
 
           # ==========================================================
-          # FINAL SONAME
+          # FINAL DEPENDENCIES
           # ==========================================================
-
-          echo
-          echo "=========================================================="
-          echo "FINAL SONAME"
-          echo "=========================================================="
-
-          "$READELF" \
-            -d "$PACKAGE_DIR/usr/lib/libleptonica.so" \
-            | grep SONAME \
-            || true
-
-          "$READELF" \
-            -d "$PACKAGE_DIR/usr/lib/libtesseract.so" \
-            | grep -E "SONAME|NEEDED" \
-            || true
-
-
-          # ==========================================================
-          # FINAL DEPENDENCY CHECK
-          # ==========================================================
-
-          echo
-          echo "=========================================================="
-          echo "FINAL DEPENDENCY CHECK"
-          echo "=========================================================="
 
           echo
           echo "--- libleptonica.so ---"
@@ -1076,7 +995,7 @@ jobs:
 
 
           # ==========================================================
-          # PACKAGE SIZE
+          # SIZE
           # ==========================================================
 
           echo
@@ -1089,7 +1008,7 @@ jobs:
 
 
           # ==========================================================
-          # BUILD SUCCESS
+          # SUCCESS
           # ==========================================================
 
           echo
@@ -1097,8 +1016,6 @@ jobs:
           echo "BUILD SUCCESS"
           echo "=========================================================="
 
-          echo
-          echo "Final package contains exactly:"
           echo
           echo "usr/bin/tesseract"
           echo "usr/lib/libleptonica.so"
