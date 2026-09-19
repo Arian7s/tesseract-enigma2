@@ -848,5 +848,3 @@ jobs:
           path: |
             tesseract-5.5.3-armv7l.tar.gz
           if-no-files-found: error
-
-هذه النسخة لا تنتقل إلى بناء Tesseract إذا بقيت رموز "jpeg12_*" غير محلولة في Leptonica، وبالتالي سنعرف مكان المشكلة مباشرة من سجل GitHub Actions. كما أن الـ Artifact النهائي يحتوي فقط على الملفات الثلاثة المطلوبة.
