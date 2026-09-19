@@ -33,10 +33,11 @@ jobs:
         export PREFIX=$WORK/sysroot
         mkdir -p "$PREFIX"
 
+        # rpath مدمج: المكتبات الثانوية ستُوضع في /usr/lib/tesseract
         export CFLAGS="-O2 -fPIC -I$PREFIX/include"
         export CXXFLAGS="-O2 -fPIC -I$PREFIX/include"
         export CPPFLAGS="-I$PREFIX/include"
-        export LDFLAGS="-L$PREFIX/lib -Wl,-rpath-link,$PREFIX/lib"
+        export LDFLAGS="-L$PREFIX/lib -Wl,-rpath-link,$PREFIX/lib -Wl,-rpath,/usr/lib -Wl,-rpath,/usr/lib/tesseract"
         export PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig"
         export PKG_CONFIG_LIBDIR="$PREFIX/lib/pkgconfig"
 
@@ -60,6 +61,7 @@ jobs:
             -DCMAKE_C_FLAGS="-O2 -fPIC" \
             -DCMAKE_INSTALL_PREFIX="$PREFIX" \
             -DCMAKE_INSTALL_LIBDIR=lib \
+            -DCMAKE_SHARED_LINKER_FLAGS="-Wl,-rpath,/usr/lib -Wl,-rpath,/usr/lib/tesseract" \
             -DENABLE_SHARED=ON -DENABLE_STATIC=OFF \
             -DWITH_JPEG8=ON -DWITH_SIMD=OFF \
             ..
@@ -82,7 +84,7 @@ jobs:
             --disable-lzma --disable-zstd --disable-webp --disable-jbig --disable-jpeg
           make -j$(nproc) && make install )
 
-        # ---------- leptonica ----------
+        # ---------- leptonica (rpath مدمج ليجد مكتبات الصور) ----------
         fetch https://github.com/DanBloomberg/leptonica/releases/download/1.87.0/leptonica-1.87.0.tar.gz lep.tar.gz
         tar xf lep.tar.gz
         ( cd leptonica-1.87.0
@@ -104,10 +106,11 @@ jobs:
         export WORK=$PWD
         export PREFIX=$WORK/sysroot
 
+        # rpath مدمج في tesseract و libtesseract.so
         export CFLAGS="-O2 -fPIC -I$PREFIX/include"
         export CXXFLAGS="-O2 -fPIC -I$PREFIX/include"
         export CPPFLAGS="-I$PREFIX/include"
-        export LDFLAGS="-L$PREFIX/lib -Wl,-rpath-link,$PREFIX/lib"
+        export LDFLAGS="-L$PREFIX/lib -Wl,-rpath-link,$PREFIX/lib -Wl,-rpath,/usr/lib -Wl,-rpath,/usr/lib/tesseract"
         export PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig"
         export PKG_CONFIG_LIBDIR="$PREFIX/lib/pkgconfig"
         export LIBLEPT_HEADERSDIR="$PREFIX/include"
@@ -132,19 +135,28 @@ jobs:
     - name: Bundle shared libraries
       run: |
         set -euxo pipefail
-        mkdir -p package/usr/lib package/usr/share/tessdata
 
-        # Leptonica + image libs from sysroot (Tesseract's own libs are already
-        # placed by make install under package/usr/lib/)
-        cp -P sysroot/lib/libleptonica.so.* package/usr/lib/
-        cp -P sysroot/lib/libjpeg.so.*     package/usr/lib/ 2>/dev/null || true
-        cp -P sysroot/lib/libpng*.so.*     package/usr/lib/ 2>/dev/null || true
-        cp -P sysroot/lib/libtiff.so.*     package/usr/lib/ 2>/dev/null || true
-        cp -P sysroot/lib/libz.so.*        package/usr/lib/
+        # الهيكل النهائي:
+        # /usr/lib/libtesseract.so*
+        # /usr/lib/libleptonica.so*
+        # /usr/lib/tesseract/libjpeg.so* libpng*.so* libtiff.so* libz.so*
 
-        # Strip
-        arm-linux-gnueabihf-strip --strip-all      package/usr/bin/tesseract || true
-        for f in package/usr/lib/*.so*; do
+        mkdir -p package/usr/lib/tesseract
+        mkdir -p package/usr/share/tessdata
+
+        # --- المكتبات الرئيسية في /usr/lib ---
+        cp -P sysroot/lib/libtesseract.so.*  package/usr/lib/ 2>/dev/null || true
+        cp -P sysroot/lib/libleptonica.so.*  package/usr/lib/
+
+        # --- المكتبات الثانوية في /usr/lib/tesseract ---
+        cp -P sysroot/lib/libjpeg.so.*  package/usr/lib/tesseract/
+        cp -P sysroot/lib/libpng*.so.*  package/usr/lib/tesseract/
+        cp -P sysroot/lib/libtiff.so.*  package/usr/lib/tesseract/
+        cp -P sysroot/lib/libz.so.*     package/usr/lib/tesseract/
+
+        # --- Stripping ---
+        arm-linux-gnueabihf-strip --strip-all package/usr/bin/tesseract || true
+        for f in package/usr/lib/*.so* package/usr/lib/tesseract/*.so*; do
           arm-linux-gnueabihf-strip --strip-unneeded "$f" || true
         done
 
@@ -153,8 +165,22 @@ jobs:
         echo "===== Content of package/ ====="
         find package -type f -o -type l | sort
 
-        echo "===== Checking NEEDED of tesseract ====="
+        echo
+        echo "===== RPATH of tesseract ====="
+        arm-linux-gnueabihf-objdump -x package/usr/bin/tesseract | grep -E 'RPATH|RUNPATH' || true
+
+        echo
+        echo "===== RPATH of libleptonica ====="
+        LEPT=$(ls package/usr/lib/libleptonica.so.* | head -n 1)
+        arm-linux-gnueabihf-objdump -x "$LEPT" | grep -E 'RPATH|RUNPATH' || true
+
+        echo
+        echo "===== NEEDED of tesseract ====="
         arm-linux-gnueabihf-objdump -p package/usr/bin/tesseract | grep NEEDED || true
+
+        echo
+        echo "===== NEEDED of libleptonica ====="
+        arm-linux-gnueabihf-objdump -p "$LEPT" | grep NEEDED || true
 
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
