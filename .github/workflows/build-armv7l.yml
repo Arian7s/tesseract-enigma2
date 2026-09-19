@@ -1,0 +1,68 @@
+name: Build subtitle_pes_tap.so
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "subtitle_pes_tap.c"
+      - ".github/workflows/build-armv7l.yml"
+
+jobs:
+  build-armv7l:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install ARMv7 hard-float toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            gcc-arm-linux-gnueabihf \
+            libc6-dev-armhf-cross \
+            binutils-arm-linux-gnueabihf
+
+      - name: Build shared library
+        run: |
+          arm-linux-gnueabihf-gcc \
+            -shared \
+            -fPIC \
+            -O2 \
+            -Wall \
+            -Wextra \
+            -Wno-unused-parameter \
+            -pthread \
+            -ldl \
+            -o subtitle_pes_tap.so \
+            subtitle_pes_tap.c
+
+      - name: Verify ELF
+        run: |
+          file subtitle_pes_tap.so
+          arm-linux-gnueabihf-readelf -h subtitle_pes_tap.so
+          arm-linux-gnueabihf-readelf -d subtitle_pes_tap.so
+
+      - name: Strip
+        run: |
+          arm-linux-gnueabihf-strip \
+            --strip-unneeded \
+            subtitle_pes_tap.so
+
+      - name: Verify final library
+        run: |
+          file subtitle_pes_tap.so
+          arm-linux-gnueabihf-readelf -h subtitle_pes_tap.so
+
+      - name: Package
+        run: |
+          mkdir -p release
+          cp subtitle_pes_tap.so release/
+          cp subtitle_pes_tap.c release/
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: subtitle-pes-tap-armv7l
+          path: release/
+          if-no-files-found: error
