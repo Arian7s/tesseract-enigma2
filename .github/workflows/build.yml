@@ -28,7 +28,7 @@ jobs:
 
             export CFLAGS='-fPIC -Os'
             export CXXFLAGS='-fPIC -Os'
-            export LDFLAGS='-L/usr/lib'
+            export LDFLAGS='-L/usr/lib -L/usr/local/lib'
             export PKG_CONFIG_PATH='/usr/lib/pkgconfig:/usr/local/lib/pkgconfig:/usr/lib/arm-linux-gnueabihf/pkgconfig'
 
             wget https://www.zlib.net/zlib-1.3.2.tar.gz
@@ -61,8 +61,10 @@ jobs:
             ./configure --prefix=/usr --enable-shared --disable-static --with-libjpeg --with-libpng --with-libtiff --with-zlib
             make -j\$(nproc) && make install && cd ..
 
-            mkdir -p /usr/lib/arm-linux-gnueabihf/pkgconfig
-            cp /usr/lib/pkgconfig/lept.pc /usr/lib/arm-linux-gnueabihf/pkgconfig/ || true
+            mkdir -p /usr/lib/pkgconfig /usr/lib/arm-linux-gnueabihf/pkgconfig
+            find /usr -name 'lept.pc' -exec sed -i 's/Requires.*/Requires:/g' {} + || true
+            find /usr -name 'lept.pc' -exec cp {} /usr/lib/pkgconfig/ \; || true
+            find /usr -name 'lept.pc' -exec cp {} /usr/lib/arm-linux-gnueabihf/pkgconfig/ \; || true
             ldconfig
 
             wget --no-check-certificate https://github.com/tesseract-ocr/tesseract/archive/refs/tags/5.5.3.tar.gz
@@ -72,8 +74,13 @@ jobs:
             sed -i 's/return TESSERACT_VERSION_STR;/return \"5.5.3 - Compile ByArian\";/g' src/api/baseapi.cpp || true
             sed -i 's|\"/usr/share/tessdata/\"|\"/usr/share/tessdata/;/media/hdd/tessdata/;/media/usb/tessdata/\"|g' src/ccutil/mainblk.cpp || true
 
+            export lept_CFLAGS=\"-I/usr/include/leptonica\"
+            export lept_LIBS=\"-L/usr/lib -llept\"
+            export LEPT_CFLAGS=\"-I/usr/include/leptonica\"
+            export LEPT_LIBS=\"-L/usr/lib -llept\"
+
             ./autogen.sh
-            ./configure --prefix=/usr --disable-static --disable-debug --disable-icu --without-pango --without-cairo --without-libarchive lept_CFLAGS=\"-I/usr/include/leptonica\" lept_LIBS=\"-L/usr/lib -llept\"
+            ./configure --prefix=/usr --disable-static --disable-debug --disable-icu --without-pango --without-cairo --without-libarchive
             make -j\$(nproc) && make install && cd ..
 
             mkdir -p package/usr/bin package/usr/lib package/usr/share/tessdata
