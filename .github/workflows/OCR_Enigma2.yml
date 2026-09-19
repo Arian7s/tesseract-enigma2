@@ -28,6 +28,7 @@ jobs:
 
           export DEBIAN_FRONTEND=noninteractive
 
+
           # ==========================================================
           # BUILD DEPENDENCIES
           # ==========================================================
@@ -47,6 +48,7 @@ jobs:
             ninja-build \
             xz-utils \
             tar \
+            patchelf \
             gcc-arm-linux-gnueabihf \
             g++-arm-linux-gnueabihf
 
@@ -241,6 +243,15 @@ jobs:
 
           # ==========================================================
           # LIBJPEG-TURBO - STATIC
+          #
+          # IMPORTANT:
+          #
+          # libjpeg-turbo 3.x provides the dual 8/12-bit API.
+          #
+          # WITH_12BIT must remain OFF here.
+          #
+          # We verify that jpeg12_* symbols are really present
+          # inside libjpeg.a before continuing.
           # ==========================================================
 
           cd "$WORK_DIR"
@@ -284,8 +295,46 @@ jobs:
 
 
           # ==========================================================
-          # LIBPNG - STATIC
+          # VERIFY JPEG12 SYMBOLS
           # ==========================================================
+
+          echo
+          echo "=========================================================="
+          echo "CHECKING LIBJPEG JPEG12 SYMBOLS"
+          echo "=========================================================="
+
+          if [ ! -f "$SYSROOT/lib/libjpeg.a" ]; then
+            echo "ERROR: libjpeg.a was not generated."
+            exit 1
+          fi
+
+          echo
+          echo "JPEG12 symbols:"
+          "$NM" -g "$SYSROOT/lib/libjpeg.a" \
+            | grep "jpeg12_" \
+            | head -n 40 || true
+
+          if ! "$NM" -g "$SYSROOT/lib/libjpeg.a" \
+            | grep -q "jpeg12_read_scanlines"; then
+
+            echo
+            echo "ERROR: libjpeg.a does not contain jpeg12_read_scanlines."
+            echo "The libjpeg-turbo dual 8/12-bit API is missing."
+            exit 1
+          fi
+
+          if ! "$NM" -g "$SYSROOT/lib/libjpeg.a" \
+            | grep -q "jpeg12_write_scanlines"; then
+
+            echo
+            echo "ERROR: libjpeg.a does not contain jpeg12_write_scanlines."
+            exit 1
+          fi
+
+
+          # ==========================================================
+          # LIBPNG - STATIC
+          # ==============================================================
 
           cd "$WORK_DIR"
 
@@ -319,7 +368,7 @@ jobs:
 
           # ==========================================================
           # LIBTIFF - STATIC
-          # ==========================================================
+          # ==============================================================
 
           cd "$WORK_DIR"
 
@@ -378,12 +427,10 @@ jobs:
 
 
           # ==========================================================
-          # LEPTONICA - SHARED ONLY
+          # LEPTONICA - SHARED
           #
-          # External image libraries are linked STATICALLY.
-          # Final SONAME:
-          #
-          #     libleptonica.so
+          # We deliberately build Leptonica ourselves with the
+          # required static libraries explicitly linked.
           # ==========================================================
 
           cd "$WORK_DIR"
@@ -418,7 +465,9 @@ jobs:
           set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
 
           set(CMAKE_C_FLAGS_INIT "-fPIC -O2 -fno-semantic-interposition -I$SYSROOT/include")
-          set(CMAKE_SHARED_LINKER_FLAGS_INIT "-L$SYSROOT/lib -Wl,-rpath-link,$SYSROOT/lib")
+
+          set(CMAKE_SHARED_LINKER_FLAGS_INIT
+            "-L$SYSROOT/lib -Wl,-rpath-link,$SYSROOT/lib -Wl,--no-as-needed")
           EOF
 
 
@@ -442,9 +491,9 @@ jobs:
             -DENABLE_OPENJPEG=OFF
 
 
-          # ----------------------------------------------------------
-          # Force static dependencies into Leptonica
-          # ----------------------------------------------------------
+          # ==========================================================
+          # FORCE STATIC LIBRARIES
+          # ==========================================================
 
           export PKG_CONFIG_PATH="$SYSROOT/lib/pkgconfig"
 
@@ -458,8 +507,29 @@ jobs:
           export JPEG_LIBS="$SYSROOT/lib/libjpeg.a"
 
           export TIFF_CFLAGS="-I$SYSROOT/include"
-          export TIFF_LIBS="$SYSROOT/lib/libtiff.a $SYSROOT/lib/libjpeg.a $SYSROOT/lib/libz.a"
+          export TIFF_LIBS="$SYSROOT/lib/libtiff.a $SYSROOT/lib/libjpeg.a $SYSROOT/lib/libpng16.a $SYSROOT/lib/libz.a"
 
+
+          # ==========================================================
+          # SHOW CMAKE CACHE
+          # ==========================================================
+
+          echo
+          echo "=========================================================="
+          echo "LEPTONICA IMAGE LIBRARIES"
+          echo "=========================================================="
+
+          grep -E \
+            "JPEG|TIFF|PNG|ZLIB" \
+            build/CMakeCache.txt \
+            | grep -E \
+            "LIBRARY|LIBRARIES|FOUND|ENABLE" \
+            || true
+
+
+          # ==========================================================
+          # BUILD LEPTONICA
+          # ==========================================================
 
           if ! cmake --build build \
             --parallel "$(nproc)" \
@@ -492,30 +562,42 @@ jobs:
 
 
           # ==========================================================
-          # RENAME LEPTONICA
+          # FIND LEPTONICA LIBRARY
           # ==========================================================
 
           echo
           echo "=========================================================="
-          echo "RENAMING LEPTONICA"
+          echo "LEPTONICA LIBRARY"
           echo "=========================================================="
 
-          if [ -f "$SYSROOT/lib/liblept.so" ]; then
+          find "$SYSROOT/lib" \
+            -maxdepth 1 \
+            -type f \
+            -name "liblept.so*" \
+            -print \
+            || true
 
-            mv \
-              "$SYSROOT/lib/liblept.so" \
-              "$SYSROOT/lib/libleptonica.so"
 
+          if [ ! -e "$SYSROOT/lib/liblept.so" ]; then
+            echo "ERROR: liblept.so was not generated."
+            exit 1
           fi
 
 
-          # ----------------------------------------------------------
-          # Rename SONAME inside the library.
-          #
-          # This requires patchelf on the host.
-          # ----------------------------------------------------------
+          # ==========================================================
+          # RENAME LEPTONICA
+          # ==========================================================
 
-          sudo apt-get install -y patchelf
+          rm -f "$SYSROOT/lib/libleptonica.so"
+
+          mv \
+            "$SYSROOT/lib/liblept.so" \
+            "$SYSROOT/lib/libleptonica.so"
+
+
+          # ==========================================================
+          # FIX LEPTONICA SONAME
+          # ==========================================================
 
           patchelf \
             --set-soname libleptonica.so \
@@ -523,7 +605,39 @@ jobs:
 
 
           # ==========================================================
-          # CHECK LEPTONICA DEPENDENCIES
+          # VERIFY JPEG12 SYMBOLS INSIDE LEPTONICA
+          # ==========================================================
+
+          echo
+          echo "=========================================================="
+          echo "CHECKING LEPTONICA JPEG12 REFERENCES"
+          echo "=========================================================="
+
+          JPEG12_UNRESOLVED="$(
+            "$NM" -D "$SYSROOT/lib/libleptonica.so" 2>/dev/null \
+              | grep -E \
+                " U jpeg12_(read|write)_" \
+              || true
+          )"
+
+          if [ -n "$JPEG12_UNRESOLVED" ]; then
+
+            echo
+            echo "ERROR: Leptonica still contains unresolved jpeg12 symbols:"
+            echo "$JPEG12_UNRESOLVED"
+
+            echo
+            echo "Leptonica was not linked correctly with libjpeg.a."
+
+            exit 1
+          fi
+
+
+          echo "OK: No unresolved jpeg12_* symbols."
+
+
+          # ==========================================================
+          # CHECK LEPTONICA NEEDED
           # ==========================================================
 
           echo
@@ -533,7 +647,8 @@ jobs:
 
           "$READELF" \
             -d "$SYSROOT/lib/libleptonica.so" \
-            | grep NEEDED || true
+            | grep NEEDED \
+            || true
 
 
           # ==========================================================
@@ -599,8 +714,11 @@ jobs:
           set(CMAKE_C_FLAGS_INIT "-fPIC -O2 -fno-semantic-interposition -I$SYSROOT/include")
           set(CMAKE_CXX_FLAGS_INIT "-fPIC -O2 -fno-semantic-interposition -I$SYSROOT/include -I$SYSROOT/include/leptonica")
 
-          set(CMAKE_EXE_LINKER_FLAGS_INIT "-L$SYSROOT/lib -Wl,-rpath-link,$SYSROOT/lib")
-          set(CMAKE_SHARED_LINKER_FLAGS_INIT "-L$SYSROOT/lib -Wl,-rpath-link,$SYSROOT/lib")
+          set(CMAKE_EXE_LINKER_FLAGS_INIT
+            "-L$SYSROOT/lib -Wl,-rpath-link,$SYSROOT/lib -Wl,--no-as-needed")
+
+          set(CMAKE_SHARED_LINKER_FLAGS_INIT
+            "-L$SYSROOT/lib -Wl,-rpath-link,$SYSROOT/lib -Wl,--no-as-needed")
           EOF
 
 
@@ -695,7 +813,8 @@ jobs:
 
           "$READELF" \
             -d "$SYSROOT/lib/libtesseract.so" \
-            | grep NEEDED || true
+            | grep NEEDED \
+            || true
 
 
           echo
@@ -705,11 +824,12 @@ jobs:
 
           "$READELF" \
             -d "$SYSROOT/bin/tesseract" \
-            | grep NEEDED || true
+            | grep NEEDED \
+            || true
 
 
           # ==========================================================
-          # VERIFY NO IMAGE LIBRARIES ARE REQUIRED
+          # VERIFY NO EXTERNAL IMAGE LIBRARIES
           # ==========================================================
 
           echo
@@ -736,6 +856,38 @@ jobs:
             fi
 
           done
+
+
+          # ==========================================================
+          # CHECK UNRESOLVED JPEG12 SYMBOLS AGAIN
+          # ==========================================================
+
+          echo
+          echo "=========================================================="
+          echo "FINAL JPEG12 CHECK"
+          echo "=========================================================="
+
+          for binary in \
+            "$SYSROOT/lib/libleptonica.so" \
+            "$SYSROOT/lib/libtesseract.so"; do
+
+            echo
+            echo "Checking:"
+            echo "$binary"
+
+            if "$NM" -D "$binary" 2>/dev/null \
+              | grep -E \
+                " U jpeg12_(read|write)_" ; then
+
+              echo
+              echo "ERROR: Unresolved jpeg12 symbols found."
+              exit 1
+            fi
+
+          done
+
+          echo
+          echo "OK: No unresolved jpeg12 symbols."
 
 
           # ==========================================================
@@ -768,9 +920,9 @@ jobs:
             "$PACKAGE_DIR/usr/lib"
 
 
-          # ----------------------------------------------------------
+          # ==========================================================
           # ONLY THREE FILES
-          # ----------------------------------------------------------
+          # ==========================================================
 
           cp -a \
             "$SYSROOT/bin/tesseract" \
@@ -880,11 +1032,13 @@ jobs:
 
           "$READELF" \
             -d "$PACKAGE_DIR/usr/lib/libleptonica.so" \
-            | grep SONAME || true
+            | grep SONAME \
+            || true
 
           "$READELF" \
             -d "$PACKAGE_DIR/usr/lib/libtesseract.so" \
-            | grep -E "SONAME|NEEDED" || true
+            | grep -E "SONAME|NEEDED" \
+            || true
 
 
           # ==========================================================
@@ -901,21 +1055,24 @@ jobs:
 
           "$READELF" \
             -d "$PACKAGE_DIR/usr/lib/libleptonica.so" \
-            | grep NEEDED || true
+            | grep NEEDED \
+            || true
 
           echo
           echo "--- libtesseract.so ---"
 
           "$READELF" \
             -d "$PACKAGE_DIR/usr/lib/libtesseract.so" \
-            | grep NEEDED || true
+            | grep NEEDED \
+            || true
 
           echo
           echo "--- tesseract ---"
 
           "$READELF" \
             -d "$PACKAGE_DIR/usr/bin/tesseract" \
-            | grep NEEDED || true
+            | grep NEEDED \
+            || true
 
 
           # ==========================================================
@@ -930,6 +1087,10 @@ jobs:
           du -ah "$PACKAGE_DIR" \
             | sort -h
 
+
+          # ==========================================================
+          # BUILD SUCCESS
+          # ==========================================================
 
           echo
           echo "=========================================================="
